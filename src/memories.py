@@ -1,7 +1,7 @@
 from typing import List, Tuple, Dict
 from concurrent.futures import ThreadPoolExecutor
-from openai import ChatCompletion, Embedding, GPT3Encoder
-import logging
+from openai import Embedding, GPT3Encoder
+import json
 import chromadb
 from ..prompts import summarize_memory
 
@@ -35,21 +35,16 @@ class MemoryManager:
             summaries = list(executor.map(summarize_memory, similar_extracts, [question]*len(similar_extracts)))
             summaries = [summary for summary in summaries if summary != "skip"]
         return summaries
+    
+    def store_grounding_embeddings(self, name: str):
+        sourcefile = f'{name}_chunked.jsonl'
 
-    def store_grounding_embeddings(self, blog_posts: List[Dict]):
-        # Iterate over the blog posts
-        for post in blog_posts:
-            # Reserve some tokens for the title and date
-            reserved_tokens = self.encoder.encode(f"Title: {post['title']}\nDate: {post['date']}\nPart: 1\n")
-            chunk_size = MAX_EMBEDDING_LENGTH - len(reserved_tokens)
+        with open(sourcefile, 'r') as f:
+            for line in f:
+                chunk = json.loads(line)
+                document = chunk['document']
+                metadata = chunk['metadata']
 
-            # Split the post content into chunks
-            content_tokens = self.encoder.encode(post['content'])
-            chunks = [content_tokens[i:i+chunk_size] for i in range(0, len(content_tokens), chunk_size)]
+                embedding = self.get_embedding(document)
 
-            logging.info(f"Storing {len(chunks)} chunks for post {post['title']}")
-
-            # Add title, date and part to each chunk and store its embedding in the Chroma DB
-            for j, chunk in enumerate(chunks):
-                document = f"Title: {post['title']}\nDate: {post['date']}\nPart: {j+1}\n{self.encoder.decode(chunk)}"
-                self.collection.add(documents=[document])
+                self.collection.add(ids=[f"{metadata['title']}_part_{metadata['part']}"], embeddings=[embedding], documents=[document], metadatas=[metadata])
