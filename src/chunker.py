@@ -1,47 +1,80 @@
 import json
-from typing import List, Dict
-from openai import GPT3Encoder
+from typing import List, Dict, Tuple
+import tiktoken
+import pandas as pd    
+
 
 MAX_EMBEDDING_LENGTH = 2048
+encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-def split_into_chunks(blog_posts: List[Dict], encoder: GPT3Encoder):
+def map_line (line: List[str]) -> Tuple[str, str, int]:
+    encoded = encoding.encode(line)
+    if len(encoded) < MAX_EMBEDDING_LENGTH:
+        return (line, encoded, len(encoded))
+    else:
+        return (line[:MAX_EMBEDDING_LENGTH], encoded[:MAX_EMBEDDING_LENGTH], MAX_EMBEDDING_LENGTH)
+
+def split_into_chunks(blog_posts: List[Dict]):
     for post in blog_posts:
-        # Split the post content into chunks
-        content_tokens = encoder.encode(post['content'])
+        print(f"Splitting {post['title']}")
+        lines = map(map_line, post['content'].split('\n'))
 
-        chunks = []
-        chunk_start = 0
-        while chunk_start < len(content_tokens):
-            chunk_end = min(chunk_start + MAX_EMBEDDING_LENGTH, len(content_tokens))
-            # Find the closest newline before the length limit
-            while chunk_end > chunk_start and content_tokens[chunk_end] != encoder.encode('\n')[0]:
-                chunk_end -= 1
-            chunks.append(content_tokens[chunk_start:chunk_end])
-            chunk_start = chunk_end
+        # Calculate total parts
+        total_parts = 0
+        temp_chunk_length = 0
+        for _, _, length in lines:
+            if temp_chunk_length + length > MAX_EMBEDDING_LENGTH:
+                total_parts += 1
+                temp_chunk_length = length
+            else:
+                temp_chunk_length += length
+        total_parts += 1  # for the last chunk
 
-        # Add title, date and part to each chunk and store its embedding in the Chroma DB
-        for j, chunk in enumerate(chunks):
-            document = encoder.decode(chunk)
+        chunk = []
+        chunk_length = 0
+        part = 1
+
+        # Reset lines iterator
+        lines = map(map_line, post['content'].split('\n'))
+
+        for line, encoded, length in lines:
+            if chunk_length + length > MAX_EMBEDDING_LENGTH:
+                metadata = {
+                    "title": post['title'],
+                    "url": post['link'],
+                    "date": post['date'].to_pydatetime().isoformat(),
+                    "total_parts": total_parts,
+                    "part": part
+                }
+                yield metadata, '\n'.join(chunk)
+                chunk = []
+                chunk_length = 0
+                part += 1
+            chunk.append(line)
+            chunk_length += length
+
+        if chunk:
             metadata = {
                 "title": post['title'],
-                "url": post['url'],
-                "part": j+1,
-                "total_parts": len(chunks),
-                "date": post['date']
+                "url": post['link'],
+                "date": post['date'].to_pydatetime().isoformat(),
+                "total_parts": total_parts,
+                "part": part
             }
-            yield document, metadata
-
+            yield metadata, '\n'.join(chunk)
+            
 def main(name):
-    encoder = GPT3Encoder()
-    sourcefile = f'{name}.json'
-    outputfile = f'{name}_chunked.jsonl'
 
-    with open(sourcefile, 'r') as f:
-        blog_posts = json.load(f)
+    sourcefile = f'data/{name}.jsonl'
+    outputfile = f'data/{name}_chunked.jsonl'
+
+
+    blog_posts = pd.read_json(path_or_buf=sourcefile, lines=True).to_records()
+    print(f"Splitting {len(blog_posts)} blog posts into chunks")
 
     with open(outputfile, 'w') as f:
-        for document, metadata in split_into_chunks(blog_posts, encoder):
-            f.write(json.dumps({"document": document, "metadata": metadata}) + '\n')
+        for item in split_into_chunks(blog_posts):
+            f.write(json.dumps(item) + '\n')
 
 if __name__ == "__main__":
     import argparse

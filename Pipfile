@@ -8,6 +8,8 @@ chromadb = "*"
 openai = "*"
 beautifulsoup4 = "*"
 requests = "*"
+tiktoken = "*"
+pandas = "*"
 
 [dev-packages]
 

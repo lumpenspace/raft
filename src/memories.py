@@ -1,7 +1,6 @@
 from typing import List, Tuple, Dict
 from concurrent.futures import ThreadPoolExecutor
 from openai import Embedding, GPT3Encoder
-import json
 import chromadb
 from ..prompts import summarize_memory
 
@@ -35,16 +34,3 @@ class MemoryManager:
             summaries = list(executor.map(summarize_memory, similar_extracts, [question]*len(similar_extracts)))
             summaries = [summary for summary in summaries if summary != "skip"]
         return summaries
-    
-    def store_grounding_embeddings(self, name: str):
-        sourcefile = f'{name}_chunked.jsonl'
-
-        with open(sourcefile, 'r') as f:
-            for line in f:
-                chunk = json.loads(line)
-                document = chunk['document']
-                metadata = chunk['metadata']
-
-                embedding = self.get_embedding(document)
-
-                self.collection.add(ids=[f"{metadata['title']}_part_{metadata['part']}"], embeddings=[embedding], documents=[document], metadatas=[metadata])
