@@ -75,10 +75,3 @@ def main(name):
     with open(outputfile, 'w') as f:
         for item in split_into_chunks(blog_posts):
             f.write(json.dumps(item) + '\n')
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description='Split blog posts into chunks.')
-    parser.add_argument('name', help='The name of the blog to process.')
-    args = parser.parse_args()
-    main(args.name)

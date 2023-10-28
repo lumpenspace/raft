@@ -42,12 +42,9 @@ def fetch_and_parse(url):
         offset = limit + offset
         results_len = len(entries)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Fetch posts from a Substack blog.')
-    parser.add_argument('blog', help='The name of the Substack blog to fetch posts from.')
-    args = parser.parse_args()
 
-    url = f'https://{args.blog}.substack.com'
+def main(blog: str):
+    url = f'https://{blog}.substack.com'
     filename = 'data/' + url.replace('https://', '').replace('.', '-') + '.jsonl'
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, 'w') as f:
