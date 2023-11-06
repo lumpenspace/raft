@@ -39,5 +39,4 @@ Then, in order to generate a fine-tuning dataset:
 1. For each interview, run the RAG process to retrieve memories from the author's past output for each of the interviewer's questions.
 2. Ask the model to rephrase each memory in the context of the interviewer's question. The same model and prompt will be used in the generation phase.
 3. Evaluate the resulting memory by the question only first, and discard it if it is not considered useful by the model. We apply this first pass separately because, at inference time, we will not have access to the target human's answer.
-4. Finally, evaluate the memory considering both the question and the target human's answer, and discard it if it is not considered useful by the model.
-5. Save the resulting context including question, memory and as many of the previous [question, memory and answers] tuples as possible, up to the maximum context size the finetune allows, as a new finetune sample.
+4. Save the resulting context including question, memory and as many of the previous [question, memory and answers] tuples as possible, up to the maximum context size the finetune allows, as a new finetune sample.
