@@ -50,7 +50,7 @@ def create_openai_finetune(name: str):
         meta = group['metadata']
         system_message = {
             'role': 'system',
-            'content': f"This is an interview between {meta['participants']['q']} and {meta['participants']['a']} on {meta['date']}."
+            'content': f"{meta['participants']['q']} is interviewing you, {meta['participants']['a']}. It is the {meta['date']}.\n\nTo better answer the questions, some memories from your past writing will be retrieved if available, by the retrieve_memories function. It will be called automatically."
         }
         finetune_data = []
 
@@ -78,7 +78,9 @@ def create_openai_finetune(name: str):
 
     # Save the fine-tuned data to a new JSONL file
     with open('data/openai_finetune.jsonl', 'w') as f:
-        f.write(json.dumps(finetune_data, indent=2))
+        for item in finetune_data:
+            f.write(json.dumps({ "messages": item }))
+            f.write('\n')
     return finetune_data
 
 def generate_finetune(name: str):
