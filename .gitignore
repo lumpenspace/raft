@@ -31,3 +31,7 @@ venv.bak/
 *.swo
 .DS_Store
 secret/
+data/garymarcus/**/*.*
+data/garymarcus/*
+data/garymarcus/
+data/garymarcus/*/length.bin
