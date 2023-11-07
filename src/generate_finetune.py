@@ -8,7 +8,7 @@ MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
 def count_tokens(prompt: object):
-    len(encoding.encode(json.dumps(prompt)))
+    return len(encoding.encode(json.dumps(prompt)))
 
 def oaify_example(example: dict, participants:dict):
     q_name = participants['q']
@@ -19,7 +19,7 @@ def oaify_example(example: dict, participants:dict):
         'content': example['question'],
         'name': q_name
     })
-    if (example.has_key('similar_memories')):
+    if 'similar_memories' in example:
        result.append({
           'role': 'function',
           'content': example['similar_memories'],
@@ -43,7 +43,7 @@ def create_openai_finetune(name: str):
         if 'metadata' in item:
             groups.append({ "metadata": item['metadata'], "examples": [] })
         elif 'example' in item:
-            groups[-1]['examples'].prepend(item['example'])
+            groups[-1]['examples'].insert(0, item['example'])
         
 
     for group in groups:
@@ -52,21 +52,34 @@ def create_openai_finetune(name: str):
             'role': 'system',
             'content': f"This is an interview between {meta['participants']['q']} and {meta['participants']['a']} on {meta['date']}."
         }
-        group['examples'].insert(0, system_message)
+        finetune_data = []
 
-        for item in group["examples"]:
-          example_tokens = count_tokens(item['example'])
-          example = item['example']
-          example, size = oaify_example(example, meta['participants'])
+        for i, item in enumerate(group["examples"]):
+            print(i)
+            example_size = count_tokens(system_message)
+            example, size = oaify_example(item, meta['participants'])
+            examples = example
+            example_size += size
+            index = i
+            if example_size < MAX_EMBEDDING_LENGTH:
+                while example_size < MAX_EMBEDDING_LENGTH:
+                    index = index + 1
+                    print('index',index)
+                    if index >= len(group["examples"]):
+                        break
+                    older_example = group["examples"][index]
 
-          # Prepend the example
-          fine_tune_data.insert(0, example)
-          total_tokens += size
+                    example, size = oaify_example(older_example, meta['participants'])
+                    if example_size + size < MAX_EMBEDDING_LENGTH:
+                        examples = example + examples
+                        example_size += size
+            examples = [system_message] + examples
+            finetune_data.append(examples)
 
     # Save the fine-tuned data to a new JSONL file
     with open('data/openai_finetune.jsonl', 'w') as f:
-        for item in fine_tune_data:
-            f.write(json.dumps(item) + '\n')
+        f.write(json.dumps(finetune_data, indent=2))
+    return finetune_data
 
 def generate_finetune(name: str):
     memory_manager = MemoryManager(name)
