@@ -25,10 +25,13 @@ def main():
     elif args.action == 'embed':
         embeddings_helpers.store_grounding_embeddings(args.name)
     elif args.action == 'ft:gen':
-        from src import generate_finetune
         if args.oai:
-            generate_finetune.create_openai_finetune(args.name)
+            from src import oai_finetune
+
+            oai_finetune.create_openai_finetune_file(args.name)
         else:
+            from src import generate_finetune
+
             generate_finetune.generate_finetune(args.name)
     else:
         print(f"Unknown action: {args.action}")

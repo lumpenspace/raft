@@ -2,11 +2,33 @@
 import json
 from chromadb import PersistentClient
 import openai
+import re
+from enum import Enum
 
 def get_embedding(text:str):
     embedding_object = openai.Embedding.create(input=text,model="text-embedding-ada-002")
     embedding_vector = embedding_object.data[0]['embedding']
     return embedding_vector
+
+def get_and_store_embedding(exchange: list, name: str, metadata: any):
+    question, answer = exchange
+    # Initialize the Chroma client and get the collection
+    chroma_client = PersistentClient(path=f"data/{name}")
+    collection = chroma_client.get_or_create_collection(name)
+
+    # Get the OpenAI embedding for the text
+    embedding = get_embedding(question)
+    
+    id = re.sub(r'\W+', '', metadata["url"]+question[:20]).lower()
+    text = f"In a past interview, you answered '{question}' with:\n\n {answer}"
+    # flatten the participants value into metadata
+    metadata = {**metadata, **{"participants": ", ".join(metadata["participants"])}}
+    # Store the text and its embedding in Chroma
+    collection.add(ids=id, embeddings=embedding, documents=text, metadatas=metadata)
+
+    return embedding
+
+
 
 def store_grounding_embeddings(name: str):
     # Initialize the Chroma client and get the collection

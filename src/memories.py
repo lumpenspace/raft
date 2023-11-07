@@ -3,28 +3,39 @@ from datetime import datetime
 import time
 import re
 from concurrent.futures import ThreadPoolExecutor
-from .embeddings_helpers import get_embedding
+from .embeddings_helpers import get_and_store_embedding
 from chromadb import PersistentClient
 import tiktoken
+from enum import Enum
 from prompts import summarize_memory
 
 MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-ExtractedDataType = List[Dict[str, Union[str, datetime]]]
 
+class MetaDataKeyEnum(Enum):
+    DATE = "date"
+    PARTICIPANTS = "participants"
+    URL = "url"
+
+ExtractedDataType = List[Dict[MetaDataKeyEnum, Union[str, datetime]]]
 
 class MemoryManager:
-    def __init__(self, name: str):
+    def __init__(self, name: str, metadata: Dict[MetaDataKeyEnum, str]):
         chroma_client = PersistentClient(path=f"data/{name}")
         self.name = name
         self.collection = chroma_client.get_collection(name)
         self.encoder = encoding.encode
+        self.metadata = metadata
 
-    def get_similar_and_summarize(self, question: str, prev_answer: str) -> ExtractedDataType:
-        similar_extracts = self.get_similar_extracts(question)
+    def get_similar_and_summarize(self, exchange: List, prev_answer: str) -> ExtractedDataType:
+        question, answer = exchange
+ 
+        similar_extracts = self.get_similar_extracts(exchange)
         print(question)
-        print(similar_extracts)
+        time.sleep(3)
+
+        print('summarizing memories')
         summaries = self.summarize_helpful_memories(question, similar_extracts, prev_answer)
 
         useful_memories = ""
@@ -35,13 +46,13 @@ class MemoryManager:
         time.sleep(3)
         return useful_memories
 
-    def get_similar_extracts(self, text: str) -> ExtractedDataType:
+    def get_similar_extracts(self, exchange:dict) -> ExtractedDataType:
         results = self.collection.query(
-        query_embeddings=[get_embedding(text)],
-        n_results=3
+            query_embeddings=[get_and_store_embedding(exchange, self.name, self.metadata)],
+            n_results=3
         )
         extracted_data: ExtractedDataType = [
-            {"date": metadata["date"], "document": document}
+            {"date": metadata["date"], "document": document }
             for metadata, document
             in zip(results["metadatas"][0], results["documents"][0])]
         return extracted_data

@@ -34,4 +34,5 @@ secret/
 data/garymarcus/**/*.*
 data/garymarcus/*
 data/garymarcus/
-data/garymarcus/*/length.bin
+data/garymarcus/chroma.sqlite3
+data/garymarcus/9878a8dc-7749-4f04-897e-ce480fc4f0f0/*.bin
