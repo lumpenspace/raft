@@ -7,7 +7,7 @@ from .embeddings_helpers import get_and_store_embedding
 from chromadb import PersistentClient
 import tiktoken
 from enum import Enum
-from prompts import summarize_memory
+from src.prompts import summarize_memory
 
 MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")

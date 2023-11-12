@@ -15,11 +15,18 @@ def get_and_store_embedding(exchange: list, name: str, metadata: any):
     # Initialize the Chroma client and get the collection
     chroma_client = PersistentClient(path=f"data/{name}")
     collection = chroma_client.get_or_create_collection(name)
+    id = re.sub(r'\W+', '', metadata["url"]+question[:20]).lower()
 
+    stored_embedding = collection.get(ids=id)
+
+    if (len(stored_embedding)):
+        print("Embedding found in db")
+        return stored_embedding['embeddings'][0]
+
+    print("getting embeddings")
     # Get the OpenAI embedding for the text
     embedding = get_embedding(question)
     
-    id = re.sub(r'\W+', '', metadata["url"]+question[:20]).lower()
     text = f"In a past interview, you answered '{question}' with:\n\n {answer}"
     # flatten the participants value into metadata
     metadata = {**metadata, **{"participants": ", ".join(metadata["participants"])}}

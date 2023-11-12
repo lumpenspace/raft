@@ -1,10 +1,10 @@
 from src.memories import MemoryManager
-from prompts import summarize_memory
+from src.prompts import summarize_memory
+import openai
+import time
 import json
 import tiktoken
-from prompts import summarize_memory
-
-MAX_EMBEDDING_LENGTH = 2048
+MAX_FINETUNE_LENGTH = 4096
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
 def count_tokens(prompt: object):
@@ -33,7 +33,29 @@ def oaify_example(example: dict, participants:dict):
     })
     return result, len(encoding.encode(json.dumps(result)));
     
-    
+def run_oai_finetune(name:str):
+    oai_remote_filename = f"{name}_finetune_{int(time.time())}"
+    file = openai.File.create(f'data/{name}_openai.jsonl', user_provided_filename=oai_remote_filename);
+    job = openai.FineTune.create(
+        training_file="oai_remote_filename", 
+        model="gpt-3.5-turbo-1106",
+        suffix=name
+    )
+    print(f'Fine tune started for job: {job.id}')
+    status = ""
+
+    while True:
+        job_update = openai.Finetune.retrieve(job.id)
+        if job_update.status in ['succeeded', 'failed']:    
+            print(f"Fine tune completed. Model ID: {job_update.fine_tuned_model}")
+            return 
+        print(f"Fine tune status:")
+        if (status != job_update.status):
+            print(job_update.status)
+        time.sleep(2)
+
+
+
 def create_openai_finetune_file(name: str):
     with open(f"data/{name}_finetune.json") as f:
         data = json.load(f)
@@ -62,8 +84,8 @@ def create_openai_finetune_file(name: str):
             examples = example
             example_size += size
             index = i
-            if example_size < MAX_EMBEDDING_LENGTH:
-                while example_size < MAX_EMBEDDING_LENGTH:
+            if example_size < MAX_FINETUNE_LENGTH:
+                while example_size < MAX_FINETUNE_LENGTH:
                     index = index + 1
                     print('index',index)
                     if index >= len(group["examples"]):
@@ -71,7 +93,7 @@ def create_openai_finetune_file(name: str):
                     older_example = group["examples"][index]
 
                     example, size = oaify_example(older_example, meta['participants'])
-                    if example_size + size < MAX_EMBEDDING_LENGTH:
+                    if example_size + size < MAX_FINETUNE_LENGTH:
                         examples = example + examples
                         example_size += size
             examples = [system_message] + examples
