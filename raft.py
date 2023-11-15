@@ -8,7 +8,7 @@ from src import ssjl, chunker, embeddings_helpers
 
 # Load environment variables and set OpenAI API key
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
 
 
 def main():

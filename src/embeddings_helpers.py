@@ -1,12 +1,14 @@
 # helper_functions.py
 import json
 from chromadb import PersistentClient
-import openai
+from openai import OpenAI
+
+client = OpenAI()
 import re
 from enum import Enum
 
 def get_embedding(text:str):
-    embedding_object = openai.Embedding.create(input=text,model="text-embedding-ada-002")
+    embedding_object = client.embeddings.create(input=text,model="text-embedding-ada-002")
     embedding_vector = embedding_object.data[0]['embedding']
     return embedding_vector
 

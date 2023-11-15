@@ -1,4 +1,6 @@
-from openai import ChatCompletion
+from openai import OpenAI
+
+client = OpenAI()
 
 def summarize_memory(memory, question:str, prev_answer, author:str):
     messages = [
@@ -11,7 +13,7 @@ def summarize_memory(memory, question:str, prev_answer, author:str):
         },
         {"role": "user", "content": f"Previous answer, for context: {prev_answer}\nQuestion: {question}\nMemory: {memory[0]}"}
     ]
-    response = ChatCompletion.create(model="gpt-4", messages=messages)
+    response = client.chat.completions.create(model="gpt-4", messages=messages)
     return response['choices'][0]['message']['content'].strip()
 
 def contextualise_memories_for_prompt(memories):

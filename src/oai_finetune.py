@@ -1,6 +1,8 @@
 from src.memories import MemoryManager
 from src.prompts import summarize_memory
-import openai
+from openai import OpenAI
+
+client = OpenAI()
 import time
 import json
 import tiktoken
@@ -17,7 +19,7 @@ def oaify_example(example: dict, participants:dict):
     result.append({
         'role': 'user',
         'content': example['question'],
-        'name': q_name
+        'name': q_name.replace(' ', '')
     })
     if 'similar_memories' in example:
        result.append({
@@ -29,29 +31,31 @@ def oaify_example(example: dict, participants:dict):
     result.append({
         'role': 'assistant',
         'content': example['answer'],
-        'name': a_name
+        'name': a_name.replace(' ', '')
     })
     return result, len(encoding.encode(json.dumps(result)));
     
 def run_oai_finetune(name:str):
-    oai_remote_filename = f"{name}_finetune_{int(time.time())}"
-    file = openai.File.create(f'data/{name}_openai.jsonl', user_provided_filename=oai_remote_filename);
-    job = openai.FineTune.create(
-        training_file="oai_remote_filename", 
-        model="gpt-3.5-turbo-1106",
-        suffix=name
-    )
+    filename = f'data/{name}_openai.jsonl'
+    # get file object
+    source_file = open(file=filename, mode='rb')
+
+    file = client.files.create(file=source_file, purpose="fine-tune");
+    job = client.fine_tuning.jobs.create(training_file=file.id, 
+    model="gpt-3.5-turbo-1106",
+    suffix=name)
     print(f'Fine tune started for job: {job.id}')
     status = ""
 
     while True:
-        job_update = openai.Finetune.retrieve(job.id)
+        job_update = client.fine_tuning.jobs.retrieve(job.id)
         if job_update.status in ['succeeded', 'failed']:    
             print(f"Fine tune completed. Model ID: {job_update.fine_tuned_model}")
             return 
         print(f"Fine tune status:")
         if (status != job_update.status):
             print(job_update.status)
+            status = job_update.status
         time.sleep(2)
 
 
