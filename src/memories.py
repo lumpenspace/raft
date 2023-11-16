@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Union
+from typing import List, Dict, Union
 from datetime import datetime
 import time
 import re

@@ -1,5 +1,4 @@
-from src.memories import MemoryManager
-from src.prompts import summarize_memory
+from src.prompts import get_interview_system_message
 from openai import OpenAI
 
 client = OpenAI()
@@ -52,8 +51,8 @@ def run_oai_finetune(name:str):
         if job_update.status in ['succeeded', 'failed']:    
             print(f"Fine tune completed. Model ID: {job_update.fine_tuned_model}")
             return 
-        print(f"Fine tune status:")
         if (status != job_update.status):
+            print(f"Fine tune status:")
             print(job_update.status)
             status = job_update.status
         time.sleep(2)
@@ -75,10 +74,8 @@ def create_openai_finetune_file(name: str):
     finetune_data = []
     for group in groups:
         meta = group['metadata']
-        system_message = {
-            'role': 'system',
-            'content': f"{meta['participants']['q']} is interviewing you, {meta['participants']['a']}. It is the {meta['date']}.\n\nTo better answer the questions, some memories from your past writing will be retrieved if available, by the retrieve_memories function. It will be called automatically."
-        }
+        system_message = get_interview_system_message(questioner=meta['participants']['q'], answerer=meta['participants']['a'], date=meta['date'])
+
         group_data = []
 
         for i, item in enumerate(group["examples"]):

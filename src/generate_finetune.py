@@ -1,8 +1,5 @@
 from src.memories import MemoryManager
-from prompts import summarize_memory
 import json
-import tiktoken
-from prompts import summarize_memory
 import time
 
 def generate_finetune(name: str):

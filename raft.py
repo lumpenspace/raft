@@ -4,12 +4,10 @@ import os
 from dotenv import load_dotenv
 import openai
 
-from src import ssjl, chunker, embeddings_helpers
+from src import chunker, embeddings_helpers, substack_embeddings
 
 # Load environment variables and set OpenAI API key
 load_dotenv()
-
-
 
 def main():
     parser = argparse.ArgumentParser(description='Run the raft command.')
@@ -19,7 +17,7 @@ def main():
     args = parser.parse_args()
 
     if args.action == 'fetch':
-        ssjl.main(args.name)
+        substack_embeddings.main(args.name)
     elif args.action == 'chunk':
         chunker.main(args.name)
     elif args.action == 'embed':
