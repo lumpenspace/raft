@@ -59,7 +59,7 @@ def run_oai_finetune(name:str):
 
 
 
-def create_openai_finetune_file(name: str):
+def create_openai_finetune_file(name: str, type:str="finetune"):
     with open(f"data/{name}_finetune.json") as f:
         data = json.load(f)
 

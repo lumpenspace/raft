@@ -1,73 +1,63 @@
-from src.memories import MemoryManager
 import json
 import time
+from src.memories import MemoryManager
+from src.files_helper import begin_json_file, end_json_file, write_context_to_file
+def process_transcripts(name: str, suffix: str, is_benchmark: bool = False):
 
-def generate_finetune(name: str):
+    with open(f"data/{name}_transcript_{suffix}.json") as f:
+        interview_data = json.load(f)
 
-    begin_file(name)
+    target_filename = f"{name}_{'benchmark' if is_benchmark else 'finetune'}.json"
+    index = suffix if isinstance(suffix, int) else 1
+    # Extract metadata
+    metadata = {key: interview_data[key] for key in ["participants", "date", "url"]}
+    memory_manager = MemoryManager(name, metadata)
 
+    # Write metadata to file
+    write_context_to_file(target_filename, {"metadata": metadata}, index, 0)
     prev_answer = None
 
-    # Loop over multiple transcript files
+    # For each exchange in the interview
+    for j, exchange in enumerate(interview_data["exchanges"]):
+        question, answer = exchange
+
+        context = {
+            "question": question,
+            "answer": answer
+        }
+
+        similar_memories = memory_manager.get_similar_and_summarize(exchange, prev_answer)
+        if len(similar_memories) > 0:
+            context["similar_memories"] = similar_memories
+
+        print(suffix)
+        print(isinstance(suffix, int))
+        write_context_to_file(
+            target_filename, {"example": context},
+            index,
+            j+1
+        )
+
+        prev_answer = answer
+
+def generate_finetune(name: str):
+    begin_json_file(f"{name}_finetune")
     i = 1
     while True:
         try:
-            # Load the interview data from the file related to the given name
-            with open(f"data/{name}_transcript_{i}.json") as f:
-                interview_data = json.load(f)
+            print(f"processing transcript #{i}")
+            process_transcripts(name, i)
         except FileNotFoundError:
+            print(f"file #{i} not found")
             break
-
-        # Extract metadata
-        metadata = {key: interview_data[key] for key in ["participants", "date", "url"]}
-        memory_manager = MemoryManager(name, metadata)
-
-        # Write metadata to file
-        write_context_to_file(name, {"metadata": metadata}, i, 0)
-
-        # For each exchange in the interview
-        for j, exchange in enumerate(interview_data["exchanges"]):
-            question, answer = exchange
-
-            # Retrieve similar memories
-            similar_memories = memory_manager.get_similar_and_summarize(exchange, prev_answer)
-
-            context = {
-                "question": question,
-                "answer": answer
-            }
-            if len(similar_memories) > 0:
-                context["similar_memories"] = similar_memories
-
-            write_context_to_file(name, {"example": context}, i, j+1)
-
-            # Update previous question and answer
-            prev_answer = answer
-            # wait 2 seconds
-            time.sleep(2)
-
+        time.sleep(2)
         i += 1
-
-    # Open the output file in append mode and write the closing bracket for the JSON array
-    end_file(name)
+        
+    end_json_file(name)
     print("Done!")
 
-def begin_file(name: str):
-    # Open the output file and write the opening bracket for the JSON array
-    write_to_file(name, '[\n', 'w')
-
-def end_file(name: str):
-    # Open the output file in append mode and write the closing bracket for the JSON array
-    write_to_file(name, '\n]', 'a')
-
-def write_to_file(name: str, data: str, mode: str = 'a'):
-    with open(f"data/{name}_finetune.json", mode) as f:
-        f.write(data)
-
-def write_context_to_file(name: str, context: dict, i: int, j: int):
-    # Open the output file in append mode and write the context
-    with open(f"data/{name}_finetune.json", 'a') as f:
-        # If it's not the first item, prepend a comma
-        if i > 1 or j > 0:
-            f.write(',\n')
-        json.dump(context, f, indent=4)
+def generate_benchmark(name: str):
+    begin_json_file(f"{name}_benchmark")
+    process_transcripts(name, 'benchmark', True)
+    end_json_file(f"{name}_benchmark")
+    print("Done!")
