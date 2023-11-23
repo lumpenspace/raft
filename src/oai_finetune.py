@@ -35,7 +35,7 @@ def oaify_example(example: dict, participants:dict):
     return result, len(encoding.encode(json.dumps(result)));
     
 def run_oai_finetune(name:str):
-    filename = f'data/{name}_openai.jsonl'
+    filename = f'data/{name}_finetune_openai.jsonl'
     # get file object
     source_file = open(file=filename, mode='rb')
 
@@ -60,7 +60,7 @@ def run_oai_finetune(name:str):
 
 
 def create_openai_finetune_file(name: str, type:str="finetune"):
-    with open(f"data/{name}_finetune.json") as f:
+    with open(f"data/{name}_{type}.json") as f:
         data = json.load(f)
 
     # group the examples and reverse the order within each group
@@ -102,7 +102,7 @@ def create_openai_finetune_file(name: str, type:str="finetune"):
         finetune_data.extend(group_data)
 
     # Save the fine-tuned data to a new JSONL file
-    with open(f'data/{name}_openai.jsonl', 'w') as f:
+    with open(f'data/{name}_{type}_openai.jsonl', 'w') as f:
         for item in finetune_data:
             f.write(json.dumps({ "messages": item }))
             f.write('\n')

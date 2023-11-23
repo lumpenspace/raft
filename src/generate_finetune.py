@@ -54,7 +54,7 @@ def generate_finetune(name: str):
         i += 1
         
     end_json_file(name)
-    print("Done!")
+    print(f"Generic finetune file generated in: data/{name}_finetune.json")
 
 def generate_benchmark(name: str):
     begin_json_file(f"{name}_benchmark")
