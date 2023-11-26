@@ -34,34 +34,40 @@ def oaify_example(example: dict, participants:dict):
     })
     return result, len(encoding.encode(json.dumps(result)));
     
+def create_finetune_job(name:str, file, model:str):
+    print(f"creating finetune job for: {model}")
+    job = client.fine_tuning.jobs.create(training_file=file.id, model=model, suffix=name)
+    print(f'Fine tune started for job: {job.id} with model: {model}')
+    return job
+
 def run_oai_finetune(name:str):
+    models = ["gpt-3.5-turbo-1106", "gpt-4-0613"]
+    status_dict = {model: "" for model in models}
     filename = f'data/{name}_finetune_openai.jsonl'
+
+    print(f'uploading file: {filename}')
     # get file object
     source_file = open(file=filename, mode='rb')
 
-    file = client.files.create(file=source_file, purpose="fine-tune");
-    job = client.fine_tuning.jobs.create(training_file=file.id, 
-    model="gpt-3.5-turbo-1106",
-    suffix=name)
-    print(f'Fine tune started for job: {job.id}')
-    status = ""
+    file = client.files.create(file=source_file, purpose="fine-tune")
+    for model in models:
+        job = create_finetune_job(name, file, model)
 
-    while True:
-        job_update = client.fine_tuning.jobs.retrieve(job.id)
-        if job_update.status in ['succeeded', 'failed']:    
-            print(f"Fine tune completed. Model ID: {job_update.fine_tuned_model}")
-            return 
-        if (status != job_update.status):
-            print(f"Fine tune status:")
-            print(job_update.status)
-            status = job_update.status
-        time.sleep(2)
-
-
+        while True:
+            job_update = client.fine_tuning.jobs.retrieve(job.id)
+            if job_update.status in ['succeeded', 'failed']:    
+                print(f"Fine tune completed for model {model}. Model ID: {job_update.fine_tuned_model}")
+                status_dict[model] = job_update.status
+                break
+            if (status_dict[model] != job_update.status):
+                print(f"Fine tune status for model {model}:")
+                print(job_update.status)
+                status_dict[model] = job_update.status
+            time.sleep(2)
 
 def create_openai_finetune_file(name: str, type:str="finetune"):
     with open(f"data/{name}_{type}.json") as f:
-        data = json.load(f)
+        data = json.load(f) 
 
     # group the examples and reverse the order within each group
     groups = []
