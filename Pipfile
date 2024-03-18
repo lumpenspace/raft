@@ -14,5 +14,8 @@ pynput = "*"
 
 [dev-packages]
 
+[scripts]
+raft = "python raft.py"
+
 [requires]
 python_version = "3.11"

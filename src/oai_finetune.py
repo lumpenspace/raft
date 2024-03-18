@@ -41,7 +41,7 @@ def create_finetune_job(name:str, file, model:str):
     return job
 
 def run_oai_finetune(name:str):
-    models = ["gpt-3.5-turbo-1106", "gpt-4-0613"]
+    models = ["gpt-3.5-turbo"]
     status_dict = {model: "" for model in models}
     filename = f'data/{name}_finetune_openai.jsonl'
 
@@ -105,10 +105,11 @@ def create_openai_finetune_file(name: str, type:str="finetune"):
                         example_size += size
             examples = [system_message] + examples
             group_data.append(examples)
-        finetune_data.extend(group_data)
+        finetune_data = group_data + finetune_data
 
     # Save the fine-tuned data to a new JSONL file
     with open(f'data/{name}_{type}_openai.jsonl', 'w') as f:
+        finetune_data.reverse()
         for item in finetune_data:
             f.write(json.dumps({ "messages": item }))
             f.write('\n')

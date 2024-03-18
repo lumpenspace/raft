@@ -86,7 +86,7 @@ def split_into_chunks(blog_posts: List[Dict]):
             
 def chunker(name):
 
-    sourcle = f'data/{name}.jsonl'
+    sourcefile = f'data/{name}.jsonl'
     outputfile = f'data/{name}_chunked.jsonl'
 
 

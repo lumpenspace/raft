@@ -1,3 +1,19 @@
+# RAFT: Retrieval-Augmented Fine-Tuning
+
+Note from [@lumpenspace](http://x.com/lumpenspace):
+
+> This technique is something ive been working last summer/fall, originally planning to get a paper out of it. Then it seemed obvious so i didn't, and instead used
+> pieces of this repo for other projects and abandoned this repo.
+>
+> I discovered not without horror that some of the tech is still cutting edge, so i might as well share it.
+>
+> In this old version, the main simulee was Gary Marcus; the idea was to make a model that could pass as him in a conversation and demonstrate how stochastic
+> parrots are still plenty capable to mimic the deterministic ones, but there's a couple interesting tidbits that i've moved to more decent repos but, given my 
+> pretty annoying habit of not sharing subpar code, you might as well start here.
+>
+> Scroll to [usage and functionality](#usage-and-functionality) for cli options, what you can do (apart from what's described below) is automagically fetch, chunk, embed, story, and query a db starting from a substack url.
+
+
 # RAFT / RATF
 
 RAFT, or Retrieval-Augmented Fine-Tuning, is a method comprising of a fine-tuning and a RAG-based retrieval phase. It is particularly suited for the creation of agents that realistically emulate a specific human target.
@@ -40,3 +56,43 @@ Then, in order to generate a fine-tuning dataset:
 2. Ask the model to rephrase each memory in the context of the interviewer's question. The same model and prompt will be used in the generation phase.
 3. Evaluate the resulting memory by the question only first, and discard it if it is not considered useful by the model. We apply this first pass separately because, at inference time, we will not have access to the target human's answer.
 4. Save the resulting context including question, memory and as many of the previous [question, memory and answers] tuples as possible, up to the maximum context size the finetune allows, as a new finetune sample.
+
+
+### Generation
+
+The fine-tuned model is then used to generate responses to the interviewer's questions. The model is prompted with the question and the rephrased memories, and the resulting response is evaluated using the RATF framework.
+
+
+## Usage and Functionality
+
+```bash
+oipenv install
+oipenv run raft
+```
+
+```bash
+usage: raft.py [-h] [--oai] [--generic]
+               {fetch,chunk,embed,ft:gen,ft:run,bench:setup} name
+
+Run the raft command.
+
+positional arguments:
+  {fetch,chunk,embed,ft:gen,ft:run,bench:setup}
+                        The action to perform; see below for details.
+  name                  The name of the blog to process.
+
+options:
+  -h, --help            show this help message and exit
+  --oai                 Only generate finetune or benchmark for openai (from
+                        existing generic file) .
+  --generic             Only generate generic finetune or benchmark file.
+
+The following actions are available:
+
+- fetch: Fetch the blog from Substack and store it in the data directory.
+- chunk: Chunk the blog into 4096 token pieces and store them in the data directory.
+- embed: Create embeddings for the chunks and store them.
+- ft:gen: Generate finetune files for the blog.
+- ft:run: Run the finetune job for the blog.
+- bench:setup: Setup the benchmark for the blog.
+```
