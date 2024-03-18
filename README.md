@@ -67,6 +67,9 @@ Then, in order to generate a fine-tuning dataset:
 3. Evaluate the resulting memory by the question only first, and discard it if it is not considered useful by the model. We apply this first pass separately because, at inference time, we will not have access to the target human's answer.
 4. Save the resulting context including question, memory and as many of the previous [question, memory and answers] tuples as possible, up to the maximum context size the finetune allows, as a new finetune sample.
 
+#### Before/after pics (interview/ ft dataset)
+
+![https://github.com/lumpenspace/raft/blob/main/Screenshot%202024-03-18%20at%2021.05.39.png?raw=true]()
 
 ### Generation
 
