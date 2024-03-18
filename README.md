@@ -5,14 +5,15 @@ Note from [@lumpenspace](http://x.com/lumpenspace):
 > This technique is something ive been working last summer/fall, originally planning to get a paper out of it. Then it seemed obvious so i didn't, and instead used
 > pieces of this repo for other projects and abandoned this repo.
 >
-> I discovered not without horror that some of the tech is still cutting edge, so i might as well share it.
+> I [discovered not without horror](https://x.com/lumpenspace/status/1769809977030426831?s=20) that some of the tech is still cutting edge, so i might as well share it.
 >
 > In this old version, the main simulee was Gary Marcus; the idea was to make a model that could pass as him in a conversation and demonstrate how stochastic
 > parrots are still plenty capable to mimic the deterministic ones, but there's a couple interesting tidbits that i've moved to more decent repos but, given my 
 > pretty annoying habit of not sharing subpar code, you might as well start here.
 >
 > Scroll to [usage and functionality](#usage-and-functionality) for cli options, what you can do (apart from what's described below) is automagically fetch, chunk, embed, story, and query a db starting from a substack url.
-
+> 
+> Not guaranteeing anything works, but it's a good starting point for a lot of things and includes a couple of new ideas.
 
 # RAFT / RATF
 
@@ -23,7 +24,7 @@ Note from [@lumpenspace](http://x.com/lumpenspace):
     - [Retrieval-Augmented Fine-Tuning](#retrieval-augmented-fine-tuning)
     - [Generation](#generation)
   - [Usage and Functionality](#usage-and-functionality)
-
+  - [Licence](#licence)
 
 RAFT, or Retrieval-Augmented Fine-Tuning, is a method comprising of a fine-tuning and a RAG-based retrieval phase. It is particularly suited for the creation of agents that realistically emulate a specific human target.
 
@@ -105,3 +106,7 @@ The following actions are available:
 - ft:run: Run the finetune job for the blog.
 - bench:setup: Setup the benchmark for the blog.
 ```
+
+## Licence
+
+public domain, whatevs
