@@ -69,7 +69,7 @@ Then, in order to generate a fine-tuning dataset:
 
 #### Before/after pics (interview/ ft dataset)
 
-![https://github.com/lumpenspace/raft/blob/main/Screenshot%202024-03-18%20at%2021.05.39.png?raw=true]()
+![](https://github.com/lumpenspace/raft/blob/main/Screenshot%202024-03-18%20at%2021.05.39.png?raw=true)
 
 ### Generation
 
