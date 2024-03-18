@@ -16,6 +16,15 @@ Note from [@lumpenspace](http://x.com/lumpenspace):
 
 # RAFT / RATF
 
+- [RAFT: Retrieval-Augmented Fine-Tuning](#raft-retrieval-augmented-fine-tuning)
+- [RAFT / RATF](#raft--ratf)
+  - [Abstract](#abstract)
+  - [Process](#process)
+    - [Retrieval-Augmented Fine-Tuning](#retrieval-augmented-fine-tuning)
+    - [Generation](#generation)
+  - [Usage and Functionality](#usage-and-functionality)
+
+
 RAFT, or Retrieval-Augmented Fine-Tuning, is a method comprising of a fine-tuning and a RAG-based retrieval phase. It is particularly suited for the creation of agents that realistically emulate a specific human target.
 
 RATF, or Replica Agent Testing Framework, is a framework for evaluating the performance of dialogue agents emulating real-world targets.
