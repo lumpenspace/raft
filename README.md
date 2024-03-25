@@ -29,6 +29,8 @@ ok then, a friend asked so now it is more lenient with the version number and us
     - [Retrieval-Augmented Fine-Tuning](#retrieval-augmented-fine-tuning)
     - [Generation](#generation)
   - [Usage and Functionality](#usage-and-functionality)
+    - [Installation](#installation)
+    - [Usage](#usage)
   - [Licence](#licence)
 
 RAFT, or Retrieval-Augmented Fine-Tuning, is a method comprising of a fine-tuning and a RAG-based retrieval phase. It is particularly suited for the creation of agents that realistically emulate a specific human target.
@@ -80,13 +82,19 @@ The fine-tuned model is then used to generate responses to the interviewer's que
 
 ## Usage and Functionality
 
+### Installation
+
+use Poetry to install the dependencies and run the script; `poetry install`
+
+### Usage
+
 ```bash
-oipenv install
-oipenv run raft
+poetry run raft -h
 ```
 
 ```bash
-usage: raft.py [-h] [--oai] [--generic]
+
+usage: raft [-h] [--oai] [--generic]
                {fetch,chunk,embed,ft:gen,ft:run,bench:setup} name
 
 Run the raft command.
