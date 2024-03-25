@@ -15,9 +15,14 @@ Note from [@lumpenspace](http://x.com/lumpenspace):
 > 
 > Not guaranteeing anything works, but it's a good starting point for a lot of things and includes a couple of new ideas.
 
+### OH GOSH
+
+ok then, a friend asked so now it is more lenient with the version number and uses poetry for the dependencies. It's still a mess, but it's a more runnable mess.
+
 # RAFT / RATF
 
 - [RAFT: Retrieval-Augmented Fine-Tuning](#raft-retrieval-augmented-fine-tuning)
+    - [OH GOSH](#oh-gosh)
 - [RAFT / RATF](#raft--ratf)
   - [Abstract](#abstract)
   - [Process](#process)

@@ -1,10 +1,14 @@
-from src.prompts import get_interview_system_message
 from openai import OpenAI
 
 client = OpenAI()
 import time
 import json
 import tiktoken
+from .prompt_manager import PromptManager
+
+PromptManager = PromptManager(client=client)
+
+
 MAX_FINETUNE_LENGTH = 4096
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
@@ -80,7 +84,7 @@ def create_openai_finetune_file(name: str, type:str="finetune"):
     finetune_data = []
     for group in groups:
         meta = group['metadata']
-        system_message = get_interview_system_message(questioner=meta['participants']['q'], answerer=meta['participants']['a'], date=meta['date'])
+        system_message = PromptManagerget_interview_system_message(questioner=meta['participants']['q'], answerer=meta['participants']['a'], date=meta['date'])
 
         group_data = []
 

@@ -1,7 +1,7 @@
 import json
+import re
 from chromadb import PersistentClient
 from openai import OpenAI
-import re
 
 client = OpenAI()
 

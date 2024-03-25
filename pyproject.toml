@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "raft"
+version = "0.1.0"
+description = "Retrieval-Augmented Fine-Tuning"
+authors = ["lumpenspace <125578322+lumpenspace@users.noreply.github.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+chromadb = "^0.4.24"
+openai = "^1.14.3"
+beautifulsoup4 = "^4.12.3"
+requests = "^2.31.0"
+tiktoken = "^0.6.0"
+pandas = "^2.2.1"
+pynput = "^1.7.6"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.poetry.scripts]
+raft = 'raft.cli:main'

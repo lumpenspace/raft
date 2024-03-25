@@ -1,13 +1,15 @@
 from typing import List, Dict, Union
-from datetime import datetime
+from enum import Enum
 import time
 import re
+from datetime import datetime
+
 from concurrent.futures import ThreadPoolExecutor
-from .embeddings_helpers import get_and_store_embedding
 from chromadb import PersistentClient
 import tiktoken
-from enum import Enum
-from src.prompts import summarize_memory
+
+from .prompt_manager import PromptManager
+from .embeddings_helpers import get_and_store_embedding
 
 MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
@@ -58,7 +60,7 @@ class MemoryManager:
         return extracted_data
     
     def summarize_memory(self, memory: ExtractedDataType, question: str, prev_answer: str) -> ExtractedDataType:
-        summary = summarize_memory(memory["document"], question, prev_answer, author=self.name)
+        summary = PromptManager().summarize_memory(memory["document"], question, prev_answer, author=self.name)
         if re.sub(r'\W+', '', summary).lower() != "skip":
             return { "date": memory["date"], "memory": summary }
         else:

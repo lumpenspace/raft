@@ -1,10 +1,7 @@
 # raft.py
 import argparse
 import os
-from dotenv import load_dotenv
-import openai
-load_dotenv()
-from src import files_helper, embeddings_helpers, substack_embeddings, generate_finetune, oai_finetune
+from raft import files_helper, embeddings_helpers, substack_embeddings, generate_finetune, oai_finetune
 
 # Load environment variables and set OpenAI API key
 

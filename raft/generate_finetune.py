@@ -1,7 +1,7 @@
 import json
 import time
-from src.memories import MemoryManager
-from src.files_helper import begin_json_file, end_json_file, write_context_to_file
+from .memories import MemoryManager
+from .files_helper import begin_json_file, end_json_file, write_context_to_file
 def process_transcripts(name: str, suffix: str, is_benchmark: bool = False):
 
     with open(f"data/{name}_transcript_{suffix}.json") as f:
