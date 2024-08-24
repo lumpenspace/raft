@@ -13,7 +13,7 @@ from .prompt_manager import PromptManager
 from .embeddings_helpers import get_and_store_embedding
 
 MAX_EMBEDDING_LENGTH = 2048
-encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+encoding = tiktoken.encoding_for_model("gpt-4-turbo")
 
 
 class MetaDataKeyEnum(Enum):
@@ -145,7 +145,7 @@ class MemoryManager:
         ]
 
         response: ChatCompletion = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo", messages=messages
+            model="gpt-4o", messages=messages
         )
 
         return response.choices[0].message.content
