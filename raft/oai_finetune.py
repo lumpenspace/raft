@@ -1,12 +1,11 @@
 from openai import OpenAI
-
-client = OpenAI()
 import time
 import json
 import tiktoken
 from .prompt_manager import PromptManager
+from .files_helper import begin_json_file, end_json_file, write_context_to_file
 
-PromptManager = PromptManager(client=client)
+prompt_manager = PromptManager()  # Remove the client argument
 
 
 MAX_FINETUNE_LENGTH = 4096
@@ -84,7 +83,7 @@ def create_openai_finetune_file(name: str, type:str="finetune"):
     finetune_data = []
     for group in groups:
         meta = group['metadata']
-        system_message = PromptManagerget_interview_system_message(questioner=meta['participants']['q'], answerer=meta['participants']['a'], date=meta['date'])
+        system_message = prompt_manager.get_interview_system_message(questioner=meta['participants']['q'], answerer=meta['participants']['a'], date=meta['date'])
 
         group_data = []
 

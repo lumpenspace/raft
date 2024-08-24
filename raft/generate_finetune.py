@@ -2,7 +2,8 @@ import json
 import time
 from .memories import MemoryManager
 from .files_helper import begin_json_file, end_json_file, write_context_to_file
-def process_transcripts(name: str, suffix: str, is_benchmark: bool = False):
+
+def process_transcripts(name: str, suffix: str, is_benchmark: bool = False, no_useful_check: bool = False):
 
     with open(f"data/{name}_transcript_{suffix}.json") as f:
         interview_data = json.load(f)
@@ -26,7 +27,7 @@ def process_transcripts(name: str, suffix: str, is_benchmark: bool = False):
             "answer": answer
         }
 
-        similar_memories = memory_manager.get_similar_and_summarize(exchange, prev_answer)
+        similar_memories = memory_manager.get_similar_and_summarize(exchange, prev_answer, no_useful_check)
         if len(similar_memories) > 0:
             context["similar_memories"] = similar_memories
 
