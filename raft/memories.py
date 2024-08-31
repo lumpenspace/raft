@@ -1,4 +1,4 @@
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Any
 from enum import Enum
 import time
 import re
@@ -8,6 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 from chromadb import PersistentClient
 import tiktoken
 from openai import OpenAI
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+    ChatCompletionFunctionMessageParam,
+)
 
 from .prompt_manager import PromptManager
 from .embeddings_helpers import get_and_store_embedding
@@ -17,16 +23,27 @@ encoding = tiktoken.encoding_for_model("gpt-4-turbo")
 
 
 class MetaDataKeyEnum(Enum):
+    """Enum for metadata keys."""
+
     DATE = "date"
     PARTICIPANTS = "participants"
     URL = "url"
 
 
-ExtractedDataType = List[Dict[MetaDataKeyEnum, Union[str, datetime]]]
+ExtractedDataType = List[Dict[str, Union[str, datetime, int, float, bool]]]
 
 
 class MemoryManager:
-    def __init__(self, name: str, metadata: Dict[MetaDataKeyEnum, str]):
+    """Manages the retrieval and summarization of memories."""
+
+    def __init__(self, name: str, metadata: Dict[MetaDataKeyEnum, Any]):
+        """
+        Initialize the MemoryManager.
+
+        Args:
+            name (str): The name of the collection.
+            metadata (Dict[MetaDataKeyEnum, Any]): Metadata for the collection.
+        """
         chroma_client = PersistentClient(path=f"data/{name}")
         self.name = name
         self.collection = chroma_client.get_collection(name)
@@ -34,18 +51,25 @@ class MemoryManager:
         self.metadata = metadata
         self.openai_client = OpenAI()
 
-    def get_similar_and_summarize(
-        self, exchange: List, prev_answer: str, no_useful_check: bool = False
-    ) -> ExtractedDataType:
-        question, answer = exchange
+    def get_similar_and_summarize(self, exchange: List[str], prev_answer: str) -> str:
+        """
+        Get similar extracts and summarize them.
 
-        similar_extracts: ExtractedDataType = self.get_similar_extracts(exchange)
+        Args:
+            exchange (List[str]): The current exchange (question and answer).
+            prev_answer (str): The previous answer.
+            no_useful_check (bool): Whether to skip the usefulness check.
+
+        Returns:
+            str: Summarized useful memories.
+        """
+        question, _ = exchange
+
+        similar: ExtractedDataType = self.get_similar_extracts(exchange)
         print(question)
         time.sleep(3)
-
-        print("summarizing memories")
-        summaries = self.summarize_helpful_memories(
-            question, similar_extracts, prev_answer, no_useful_check
+        summaries: List[Dict[str, str]] = self.summarize_helpful_memories(
+            question, similar, prev_answer
         )
 
         useful_memories = ""
@@ -56,8 +80,22 @@ class MemoryManager:
                 )
         return useful_memories
 
-    def get_similar_extracts(self, exchange):
-        embedding = get_and_store_embedding(exchange, self.name, self.metadata)
+    def get_similar_extracts(self, exchange: List[str]) -> ExtractedDataType:
+        """
+        Get similar extracts from the collection.
+
+        Args:
+            exchange (List[str]): The current exchange (question and answer).
+
+        Returns:
+            ExtractedDataType: List of similar extracts with metadata.
+        """
+        # Convert MetaDataKeyEnum keys to strings
+        string_metadata = {k.value: v for k, v in self.metadata.items()}
+
+        embedding = get_and_store_embedding(
+            {"question": exchange[0]}, self.name, string_metadata
+        )
         results = self.collection.query(
             query_embeddings=[embedding],
             n_results=5,
@@ -68,11 +106,12 @@ class MemoryManager:
             {
                 "date": metadata.get("date", "Unknown date"),
                 "document": document,
-                "participants": metadata.get("participants", "Unknown participants"),
+                "participants": metadata.get("participants", "Unknown"),
                 "url": metadata.get("url", ""),
             }
             for metadata, document in zip(
-                results["metadatas"][0], results["documents"][0]
+                results["metadatas"][0] if results["metadatas"] else [],
+                results["documents"][0] if results["documents"] else [],
             )
         ]
 
@@ -80,12 +119,24 @@ class MemoryManager:
 
     def summarize_memory(
         self,
-        memory: ExtractedDataType,
+        memory: Dict[str, str],
         question: str,
         prev_answer: str,
         no_useful_check: bool = False,
-    ) -> ExtractedDataType:
-        prompt_manager = PromptManager()  # Create an instance here
+    ) -> Dict[str, str]:
+        """
+        Summarize a single memory.
+
+        Args:
+            memory (Dict[str, str]): The memory to summarize.
+            question (str): The current question.
+            prev_answer (str): The previous answer.
+            no_useful_check (bool): Whether to skip the usefulness check.
+
+        Returns:
+            Dict[str, str]: Summarized memory with date.
+        """
+        prompt_manager = PromptManager()
         summary = prompt_manager.summarize_memory(
             memory["document"],
             question,
@@ -101,51 +152,61 @@ class MemoryManager:
     def summarize_helpful_memories(
         self,
         question: str,
-        similar_extracts: ExtractedDataType,
+        similar: ExtractedDataType,
         prev_answer: str,
-        no_useful_check: bool = False,
-    ):
+    ) -> List[Dict[str, str]]:
+        """
+        Summarize helpful memories from similar extracts.
+
+        Args:
+            question (str): The current question.
+            similar (ExtractedDataType): List of similar extracts.
+            prev_answer (str): The previous answer.
+            no_useful_check (bool): Whether to skip the usefulness check.
+
+        Returns:
+            List[Dict[str, str]]: List of summarized memories.
+        """
         with ThreadPoolExecutor() as executor:
             summaries = list(
                 executor.map(
-                    self.summarize_memory,
-                    similar_extracts,
-                    [question] * len(similar_extracts),
-                    [prev_answer] * len(similar_extracts),
-                    [no_useful_check] * len(similar_extracts),
+                    lambda x: self.summarize_memory(x, question, prev_answer),
+                    similar,
                 )
             )
         return summaries
 
-    def ask_question(self, question: str, no_useful_check: bool = False) -> str:
-        similar_extracts: ExtractedDataType = self.get_similar_extracts(
-            {"question": question, "answer": ""}
-        )
-        context = "\n\n".join(
-            [str(extract.get("document", "")) for extract in similar_extracts]
-        )
+    def ask_question(self, question: str) -> str:
+        """
+        Ask a question and get an answer based on similar extracts.
 
-        # Use get_similar_and_summarize to process the similar extracts
-        useful_memories = self.get_similar_and_summarize(
-            [question, ""], "", no_useful_check
-        )
+        Args:
+            question (str): The question to ask.
 
-        messages = [
-            {
-                "role": "system",
-                "content": f"Given these previous blog posts and relevant memories, how would you answer the user's question in the style of {self.name}?",
-            },
-            {"role": "system", "content": context},
-            {
-                "role": "function",
-                "name": "retrieve_memories",
-                "content": useful_memories,
-            },
-            {"role": "user", "content": question},
+        Returns:
+            str: The generated answer.
+        """
+        similar: ExtractedDataType = self.get_similar_extracts([question, ""])
+        context = "\n\n".join([str(x.get("document", "")) for x in similar])
+
+        memories = self.get_similar_and_summarize([question, ""], "")
+
+        messages: List[ChatCompletionMessageParam] = [
+            ChatCompletionSystemMessageParam(
+                role="system",
+                content=f"Given these previous blog posts and relevant \
+                    memories, how would you answer the user's question \
+                    in the style of {self.name}?",
+            ),
+            ChatCompletionSystemMessageParam(role="system", content=context),
+            ChatCompletionFunctionMessageParam(
+                role="function", name="retrieve_memories", content=memories
+            ),
+            ChatCompletionUserMessageParam(role="user", content=question),
         ]
 
-        response: ChatCompletion = self.openai_client.chat.completions.create(
-            model="gpt-4o", messages=messages
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4-turbo", messages=messages
         )
 
-        return response.choices[0].message.content
+        return response.choices[0].message.content or ""

@@ -1,29 +1,51 @@
+"""
+This module provides helper functions for working with embeddings.
+"""
+
 import json
-import re
+from typing import Dict, Any, List
 from chromadb import PersistentClient
 from openai import OpenAI
 
 client = OpenAI()
 
 
-def get_embedding(text: str):
+def get_embedding(text: str) -> List[float]:
+    """
+    Get the embedding for a given text using OpenAI's API.
+
+    Args:
+        text (str): The text to embed.
+
+    Returns:
+        List[float]: The embedding vector.
+    """
     embedding_object = client.embeddings.create(
-        input=text,  # Remove the list wrapping
-        model="text-embedding-ada-002"
+        input=text, model="text-embedding-ada-002"
     )
     embedding_vector = embedding_object.data[0].embedding
     return embedding_vector
 
 
-def get_and_store_embedding(exchange, name, metadata):
-    print("Metadata:", metadata)  # Add this line for debugging
-    if isinstance(exchange, dict):
-        question = exchange.get("question", "") or exchange.get("human", "")
-    else:
-        question = str(exchange)  # Ensure exchange is converted to a string
-    # Use a default value if 'url' is not in metadata
+def get_and_store_embedding(
+    exchange: Dict[str, Any], name: str, metadata: Dict[str, Any]
+) -> List[float]:
+    """
+    Get and store the embedding for a given exchange.
+
+    Args:
+        exchange (Dict[str, Any]): The exchange data.
+        name (str): The name of the collection.
+        metadata (Dict[str, Any]): Metadata for the embedding.
+
+    Returns:
+        List[float]: The embedding vector.
+    """
+    print("Metadata:", metadata)
+    qs = exchange.get("question", "") or exchange.get("human", "")
+
     url = metadata.get("url", "")
-    id = re.sub(r"\W+", "", f"{url}{question[:20]}").lower()
+    id = "".join(c for c in f"{url}{qs[:20]}" if c.isalnum()).lower()
 
     chroma_client = PersistentClient(path=f"data/{name}")
     collection = chroma_client.get_or_create_collection(name)
@@ -32,27 +54,32 @@ def get_and_store_embedding(exchange, name, metadata):
 
     if stored_embedding and len(stored_embedding):
         print("Embedding found in db")
-        return stored_embedding[0]
+        return list(stored_embedding[0])
 
     print("getting embeddings")
-    # Get the OpenAI embedding for the text
-    embedding = get_embedding(question)
+    embedding = get_embedding(qs)
 
-    # Prepare metadata
-    if metadata:
-        if "participants" in metadata:
-            metadata = {**metadata, **{"participants": ", ".join(metadata["participants"].values())}}
-    else:
-        # If metadata is empty, create a minimal metadata dict
-        metadata = {"source": "user_query"}
+    meta: Dict[str, str] = (
+        {
+            **metadata,
+            **{"participants": ", ".join(metadata["participants"].values())},
+        }
+        if "participants" in metadata
+        else {"source": "participants"}
+    )
 
-    # Store the question and its embedding in Chroma
-    collection.add(ids=id, embeddings=embedding, documents=question, metadatas=metadata)
+    collection.add(ids=id, embeddings=embedding, documents=qs, metadatas=meta)
 
     return embedding
 
 
-def store_grounding_embeddings(name: str):
+def store_grounding_embeddings(name: str) -> None:
+    """
+    Store grounding embeddings for a given name.
+
+    Args:
+        name (str): The name of the collection and file to process.
+    """
     chroma_client = PersistentClient(path=f"data/{name}")
     collection = chroma_client.get_or_create_collection(name)
 
@@ -63,14 +90,10 @@ def store_grounding_embeddings(name: str):
             metadata, document = json.loads(line)
             print(f"Storing {metadata['title']}")
 
-            # Get the OpenAI embedding for the document
             embeddings = get_embedding(document)
-            # Store the document, its embedding, and its metadata in Chroma
             collection.add(
                 ids=f"{metadata['title']}_part_{metadata['part']}",
                 embeddings=embeddings,
                 documents=document,
                 metadatas=metadata,
             )
-
-        return
