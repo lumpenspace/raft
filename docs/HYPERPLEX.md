@@ -10,16 +10,18 @@ change.
 
 | tool | sigil | accent | why |
 | --- | --- | --- | --- |
-| raft | `≋` | cyan `#22d3ee` | waves under the raft |
+| raft | `≋` | mint `#67dfc2` | waves under the raft |
 | ariadne | `⌇` | amber `#fbbf24` | the golden thread |
 | opbdh | `◉` | red `#ef4444` | HAL's eye (pre-dates the brand; kept as canon) |
 
-Unifying chrome: hyperplex violet `#a78bfa` and the mark `⟡`.
+Unifying chrome: hyperplex blue `#4d7cff` — the accent of
+[hyperplex.org](https://hyperplex.org), so terminal and web share one palette —
+and the mark `⟡`. raft's mint is the site's linked-node color.
 
 ## Conventions
 
 - **Banner** (interactive entry points only): `{sigil} {tool}  ·  ⟡ hyperplex  · tagline`
-  over a thin violet rule.
+  over a thin chrome-blue rule.
 - **Prompts**: accent `»` marker; defaults dim in brackets; choices numbered with
   accent numerals.
 - **Status**: steps `◆` in accent; results `✓` green / `!` yellow / `✗` red; secondary

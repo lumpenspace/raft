@@ -16,9 +16,9 @@ from typing import List, Optional
 
 TOOL = "raft"
 SIGIL = "≋"
-ACCENT = "#22d3ee"
+ACCENT = "#67dfc2"
 
-VIOLET = "#a78bfa"
+CHROME = "#4d7cff"  # hyperplex.org accent
 MARK = "⟡"
 
 
@@ -50,16 +50,16 @@ def console():
 
 
 def banner(tagline: str = "") -> None:
-    """`≋ raft · ⟡ hyperplex` over a thin violet rule."""
+    """`{sigil} {tool} · ⟡ hyperplex` over a thin chrome rule."""
     c = console()
     if c is None:
         print(f"{TOOL} — hyperplex", file=sys.stderr)
         return
-    line = f"[bold {ACCENT}]{SIGIL} {TOOL}[/]  [dim]·[/]  [{VIOLET}]{MARK} hyperplex[/]"
+    line = f"[bold {ACCENT}]{SIGIL} {TOOL}[/]  [dim]·[/]  [{CHROME}]{MARK} hyperplex[/]"
     if tagline:
         line += f"  [dim]· {tagline}[/]"
     c.print(line)
-    c.print(f"[{VIOLET}]{'─' * min(46, c.width)}[/]")
+    c.print(f"[{CHROME}]{'─' * min(46, c.width)}[/]")
 
 
 def step(message: str) -> None:
@@ -142,7 +142,7 @@ def confirm(prompt: str, default: bool = True) -> bool:
 
 
 def choose(prompt: str, options: List[str], default: Optional[int] = None) -> int:
-    """Pick one option by number; returns the 0-based index."""
+    """Pick one option by number (or by typing it); returns the 0-based index."""
     c = console()
     if c is None:
         print(f"\n{prompt}", file=sys.stderr)
@@ -163,4 +163,7 @@ def choose(prompt: str, options: List[str], default: Optional[int] = None) -> in
             return default
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return int(raw) - 1
+        matches = [i for i, o in enumerate(options) if o.lower().startswith(raw.lower())]
+        if len(matches) == 1:
+            return matches[0]
         warn(f"enter a number between 1 and {len(options)}")
