@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
+from . import hx
+
 STRUCTURER_MODEL = os.environ.get("RAFT_LLM_MODEL", "gpt-4o")
 
 # Keep single LLM calls comfortably inside the context window.
@@ -209,9 +211,9 @@ def structure_raw_conversation(raw_text: str, target: str) -> Dict[str, Any]:
     """
     client = OpenAI()
     if len(raw_text) > MAX_STRUCTURE_CHARS:
-        print(
-            f"  (source is {len(raw_text)} chars; structuring the first "
-            f"{MAX_STRUCTURE_CHARS} -- split long files for full coverage)"
+        hx.warn(
+            f"source is {len(raw_text)} chars; structuring the first "
+            f"{MAX_STRUCTURE_CHARS} -- split long files for full coverage"
         )
         raw_text = raw_text[:MAX_STRUCTURE_CHARS]
     response = client.chat.completions.create(
@@ -281,7 +283,7 @@ def import_conversation_file(name: str, path: str, target: str) -> str:
             exchanges,
         )
 
-    print(f"  {path}: unstructured, extracting exchanges with {STRUCTURER_MODEL}...")
+    hx.step(f"{path}: unstructured, extracting exchanges with {STRUCTURER_MODEL}")
     structured = structure_raw_conversation(raw, target)
     return write_transcript(
         name,

@@ -15,6 +15,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List
 
 from .convo_structurer import messages_to_exchanges, write_transcript
+from . import hx
 from .interactive import ask, ask_path, bail, choose, confirm
 
 ARIADNE_INSTALL_HINT = (
@@ -161,13 +162,13 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
         )
         n_transcripts += 1
 
-    print(
-        f"\nImported {n_docs} grounding documents into {corpus_path} and "
-        f"{len(all_exchanges)} exchanges into {n_transcripts} transcript file(s)."
+    hx.ok(
+        f"imported {n_docs} grounding documents into {corpus_path} and "
+        f"{len(all_exchanges)} exchanges into {n_transcripts} transcript file(s)"
     )
     if n_docs and not all_exchanges:
-        print(
-            f"  note: no question/answer pairs were found. Those threads are\n"
+        hx.warn(
+            f"no question/answer pairs were found. Those threads are\n"
             f"  probably {handle or target} talking to themselves, which makes good\n"
             f"  grounding material but no interview data. Try --replies-only\n"
             f"  sources, or add conversation examples with `raft interactive`."
@@ -224,6 +225,8 @@ def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) ->
         standalone (bool): Print next steps and offer to chunk/embed.
             False when called as one step of `raft interactive`.
     """
+    if standalone:
+        hx.banner("tweets -> persona dataset, via ariadne")
     ariadne = load_ariadne()
 
     options = ask_build_options()
@@ -235,16 +238,16 @@ def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) ->
     if not name:
         name = ask("Dataset name", target.lstrip("@").lower())
 
-    print("\nReconstructing tweet threads with ariadne...")
+    hx.step("reconstructing tweet threads with ariadne")
     result = ariadne.build(**options)
 
     for warning in result.warnings[:10]:
-        print(f"  note: {warning}")
+        hx.say(f"note: {warning}")
     if not result.conversations:
         bail("ariadne reconstructed no conversations from that source")
 
     documents = result.raft_documents()
-    print(f"Reconstructed {len(documents)} thread(s).")
+    hx.ok(f"reconstructed {len(documents)} thread(s)")
     result.save_cache()
 
     import_documents(name, documents, target)
@@ -252,11 +255,11 @@ def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) ->
     if not standalone:
         return
 
-    print("\nNext steps:")
-    print(f"  raft chunk {name}   # chunk the grounding corpus")
-    print(f"  raft embed {name}   # embed + store in chromadb")
-    print(f"  raft ft:gen {name}  # generate the finetune dataset")
-    print(f"  raft ft:run {name}  # run the finetune")
+    hx.step("next steps")
+    hx.say(f"  raft chunk {name}   # chunk the grounding corpus")
+    hx.say(f"  raft embed {name}   # embed + store in chromadb")
+    hx.say(f"  raft ft:gen {name}  # generate the finetune dataset")
+    hx.say(f"  raft ft:run {name}  # run the finetune")
     if confirm("Run chunk + embed now?", default=False):
         from . import embeddings_helpers, files_helper
 

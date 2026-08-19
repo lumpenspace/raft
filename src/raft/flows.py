@@ -12,7 +12,7 @@ import glob
 import os
 from typing import List
 
-from . import embeddings_helpers, files_helper, generate_finetune, oai_finetune
+from . import embeddings_helpers, files_helper, generate_finetune, hx, oai_finetune
 from . import substack_embeddings
 from .convo_structurer import import_conversation_file, import_text_source_file
 from .hf_finetune import is_openai_finetunable, run_hf_finetune
@@ -22,14 +22,14 @@ from .interactive import ask, choose, confirm
 def collect_paths(prompt: str) -> List[str]:
     """Ask for file paths (globs allowed) until the user is done."""
     paths: List[str] = []
-    print(f"{prompt} (one per line, globs ok; empty line to finish)")
+    hx.say(f"{prompt} (one per line, globs ok; empty line to finish)")
     while True:
         raw = input("> ").strip()
         if not raw:
             return paths
         expanded = sorted(glob.glob(os.path.expanduser(raw)))
         if not expanded:
-            print("  no files match")
+            hx.warn("no files match")
         paths.extend(expanded)
 
 
@@ -62,7 +62,7 @@ def gather_text_sources(name: str, target: str) -> bool:
         elif kind == 2:
             for path in collect_paths("Text source files"):
                 n = import_text_source_file(name, path)
-                print(f"  {path}: {n} document(s) added")
+                hx.ok(f"{path}: {n} document(s) added")
                 added = True
         else:
             return added
@@ -78,16 +78,16 @@ def gather_conversations(name: str, target: str) -> bool:
     for path in paths:
         try:
             written = import_conversation_file(name, path, target)
-            print(f"  {path} -> {written}")
+            hx.ok(f"{path} -> {written}")
             added = True
         except ValueError as e:
-            print(f"  skipped: {e}")
+            hx.warn(f"skipped: {e}")
     return added
 
 
 def run_interactive() -> None:
     """Run the guided end-to-end raft session."""
-    print("raft interactive -- build a persona dataset and finetune it.\n")
+    hx.banner("build a persona dataset and finetune it")
     target = ask("Who is the target (the person to emulate)?")
     name = ask("Dataset name", target.replace(" ", "_").lower())
 
@@ -113,4 +113,4 @@ def run_interactive() -> None:
         else:
             run_hf_finetune(name, model, interactive=True)
 
-    print(f"\nAll set. Try: raft ask {name} --question '...'")
+    hx.ok(f"all set. Try: raft ask {name} --question '...'")

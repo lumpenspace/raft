@@ -12,6 +12,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from . import hx
 from .interactive import ask, bail, confirm
 
 OPBDH_INSTALL_HINT = (
@@ -194,13 +195,13 @@ def pick_model_interactively(opbdh: Any) -> str:
             query = ask("Search query", "instruct")
             try:
                 for model_id in opbdh.search_models(query, limit=15):
-                    print(f"  {model_id}")
+                    hx.say(f"  {model_id}")
             except Exception as e:
-                print(f"  (search unavailable: {e})")
+                hx.warn(f"search unavailable: {e}")
         model = ask("Huggingface model id (e.g. Qwen/Qwen2.5-7B-Instruct)")
         if "/" in model:
             return model
-        print("That doesn't look like a huggingface id (expected org/name).")
+        hx.warn("that doesn't look like a huggingface id (expected org/name)")
 
 
 def run_hf_finetune(
@@ -232,9 +233,9 @@ def run_hf_finetune(
     if interactive and "vram_gb" not in overrides:
         estimate = opbdh.estimate_model_size(model)
         if estimate.size_gb:
-            print(
-                f"\n{model} weighs about {estimate.size_gb:.1f} GB; "
-                f"a network volume of ~{opbdh.suggest_volume_gb(estimate)} GB would cache it."
+            hx.say(
+                f"{model} weighs about {estimate.size_gb:.1f} GB; "
+                f"a network volume of ~{opbdh.suggest_volume_gb(estimate)} GB would cache it"
             )
         vram = ask("Minimum GPU VRAM in GB (empty = opbdh default)", "")
         if vram:
@@ -245,10 +246,10 @@ def run_hf_finetune(
 
     plan = opbdh.plan(run_dir, model=model, **overrides)
     summary = opbdh.summarize(plan)
-    print(
-        f"\nLaunching on {summary['gpu_candidates'][0]} "
+    hx.step(
+        f"launching on {summary['gpu_candidates'][0]} "
         f"(~${summary['estimated_hourly_dollars']}/hr, "
-        f"max spend ${summary['max_spend_dollars']}).\n"
+        f"max spend ${summary['max_spend_dollars']})"
     )
 
     try:
@@ -256,7 +257,7 @@ def run_hf_finetune(
             run_dir,
             model=model,
             progress=True,
-            on_event=lambda event: print(f"  [{event.kind}] {event.message}"),
+            on_event=lambda event: hx.say(f"[{event.kind}] {event.message}"),
             **overrides,
         )
     except opbdh.MaxSpendReached as e:
@@ -264,4 +265,4 @@ def run_hf_finetune(
     except RuntimeError as e:
         bail(f"the finetune failed on the pod: {e}")
 
-    print(f"\nDone. The LoRA adapter is in {result.outputs_dir / 'adapter'}.")
+    hx.ok(f"done — the LoRA adapter is in {result.outputs_dir / 'adapter'}")
