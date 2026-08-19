@@ -12,8 +12,14 @@ class PromptManager:
     """Manages prompts for the RAFT project."""
 
     def __init__(self):
-        """Initialize the PromptManager."""
-        self.client = OpenAI()
+        """Initialize the PromptManager (the API client is created lazily)."""
+        self._client = None
+
+    @property
+    def client(self) -> OpenAI:
+        if self._client is None:
+            self._client = OpenAI()
+        return self._client
 
     def get_interview_system_message(
         self, questioner: str, answerer: str, date: str

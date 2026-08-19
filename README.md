@@ -19,6 +19,44 @@ Note from [@lumpenspace](http://x.com/lumpenspace):
 
 ok then, a friend asked so now it is more lenient with the version number and uses poetry for the dependencies. It's still a mess, but it's a more runnable mess.
 
+## 2.0
+
+New major version. Substack is no longer the only way in:
+
+- **`raft interactive`** — guided end-to-end session. Asks who the target is, collects
+  text sources (substack / tweets / local files) and conversation examples. Structured
+  inputs (raft transcripts, chat-message JSON, grounding jsonl) are recognised and
+  imported as-is; unstructured ones (raw chat logs, podcast transcripts, whatever) are
+  converted into transcript datasets with an LLM (`RAFT_LLM_MODEL`, default `gpt-4o`).
+  Then chunk/embed/ft:gen/ft:run, each step optional.
+- **`raft tweets`** — tweet mode. Asks where the tweets come from (archive export,
+  CSV/JSON dump, or a public handle fetched live) and calls
+  [ariadne](https://github.com/lumpenspace/ariadne)'s Python API to reconstruct reply
+  branches, then imports them: thread texts become grounding documents, reply branches
+  become q/a transcripts. The target's own tweets become the answers, whoever they were
+  replying to becomes the questioner. Install with `pip install 'raft[tweets]'`.
+- **`raft ft:run <name> --model <model>`** — model routing. OpenAI-finetunable ids
+  (gpt-4o-mini and friends) go through the OpenAI finetuning API as before. Any other
+  model — i.e. a huggingface `org/name` id — is trained on a rented GPU pod via
+  [opbdh](https://github.com/lumpenspace/opbdh): raft generates a self-contained LoRA SFT
+  run directory (script + requirements + dataset) and hands it to `opbdh launch`.
+  Interactively it helps you pick the model (`opbdh models search`) and size the pod;
+  non-interactively, opbdh settings pass straight through:
+
+  ```bash
+  raft ft:run garymarcus --model Qwen/Qwen2.5-7B-Instruct --vram-gb 48 --max-spend 5
+  ```
+
+  Anything opbdh accepts (`--provider`, `--max-dollars-per-hour`, ...) can be appended
+  and is forwarded to its Python API, and an `opbdh.json` in the project root works too.
+  The trained adapter lands in `runpod_results/<run_id>/results/adapter`. Install with
+  `pip install 'raft[hf]'` (python ≥ 3.11) plus a one-time `opbdh config wizard`.
+
+Both integrations go through the two tools' Python APIs rather than shelling out, so
+raft gets the reconstructed threads and the run result as data — and surfaces their
+errors (spend guard tripped, remote job failed) directly. Install both with
+`pip install 'raft[all]'`.
+
 # RAFT / RATF
 
 - [RAFT: Retrieval-Augmented Fine-Tuning](#raft-retrieval-augmented-fine-tuning)
@@ -62,8 +100,8 @@ The interview transcripts used within a RAG-inspired process retreiving "memorie
 
 The steps to reproduce this process are as follows:
 
-1. Create a dataset of interview transcripts featuring the target human. Each interview should be a separate file, with the interviewer's questions and the target human's answers separated by a newline. [TODO: update w current method]
-2. Create a dataset of the author's past written output.
+1. Create a dataset of interview transcripts featuring the target human. Each interview is a separate `data/{name}_transcript_{i}.json` file holding `{"participants": {"q": ..., "a": ...}, "date": ..., "url": ..., "exchanges": [[question, answer], ...]}`. As of 2.0 you don't have to write these by hand: `raft interactive` takes chat-message JSON, ariadne output or plain unstructured transcripts and produces them for you.
+2. Create a dataset of the author's past written output — `data/{name}.jsonl`, one `{"title", "link", "date", "content"}` object per line. `raft fetch` builds this from a substack; `raft tweets` from a tweet archive; `raft interactive` from arbitrary local files.
 3. Split the past output dataset in chunks of a size suitable for the chosen embedding model (8192 tokens for Openai's text-embedding-ada-002), and collect metadata and embeddings for each chunk.
 4. Store the resulting metadata and embeddings in a vector database (we use ChromaDB).
 
@@ -95,32 +133,19 @@ use Poetry to install the dependencies and run the script; `poetry install`
 poetry run raft -h
 ```
 
-```bash
-
-usage: raft [-h] [--oai] [--generic]
-               {fetch,chunk,embed,ft:gen,ft:run,bench:setup} name
-
-Run the raft command.
-
-positional arguments:
-  {fetch,chunk,embed,ft:gen,ft:run,bench:setup}
-                        The action to perform; see below for details.
-  name                  The name of the blog to process.
-
-options:
-  -h, --help            show this help message and exit
-  --oai                 Only generate finetune or benchmark for openai (from
-                        existing generic file) .
-  --generic             Only generate generic finetune or benchmark file.
+```
 
 The following actions are available:
 
+- interactive: Guided end-to-end session: sources, conversations, finetune.
+- tweets: Build a dataset from tweets via ariadne interactive.
 - fetch: Fetch the blog from Substack and store it in the data directory.
 - chunk: Chunk the blog into 4096 token pieces and store them in the data directory.
 - embed: Create embeddings for the chunks and store them.
 - ft:gen: Generate finetune files for the blog.
-- ft:run: Run the finetune job for the blog.
+- ft:run: Run the finetune job (OpenAI, or huggingface via opbdh).
 - bench:setup: Setup the benchmark for the blog.
+- ask: Ask a question about the blog content.
 ```
 
 ## Licence

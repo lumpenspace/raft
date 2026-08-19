@@ -7,7 +7,14 @@ from typing import Dict, Any, List
 from chromadb import PersistentClient
 from openai import OpenAI
 
-client = OpenAI()
+_client = None
+
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        _client = OpenAI()
+    return _client
 
 
 def get_embedding(text: str) -> List[float]:
@@ -20,7 +27,7 @@ def get_embedding(text: str) -> List[float]:
     Returns:
         List[float]: The embedding vector.
     """
-    embedding_object = client.embeddings.create(
+    embedding_object = _get_client().embeddings.create(
         input=text, model="text-embedding-ada-002"
     )
     embedding_vector = embedding_object.data[0].embedding

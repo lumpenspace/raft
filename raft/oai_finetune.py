@@ -10,7 +10,14 @@ prompt_manager = PromptManager()
 
 MAX_FINETUNE_LENGTH = 4096
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-client = OpenAI()
+_client = None
+
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        _client = OpenAI()
+    return _client
 
 
 def count_tokens(prompt: object) -> int:
@@ -80,33 +87,34 @@ def create_finetune_job(name: str, file: Any, model: str) -> Any:
         Any: The created fine-tuning job.
     """
     print(f"creating finetune job for: {model}")
-    job = client.fine_tuning.jobs.create(
+    job = _get_client().fine_tuning.jobs.create(
         training_file=file.id, model=model, suffix=name
     )
     print(f"Fine tune started for job: {job.id} with model: {model}")
     return job
 
 
-def run_oai_finetune(name: str) -> None:
+def run_oai_finetune(name: str, model: str = "gpt-4o-mini-2024-07-18") -> None:
     """
     Run OpenAI fine-tuning for a given name.
 
     Args:
         name (str): The name of the fine-tuning job.
+        model (str): The OpenAI model to finetune.
     """
-    models = ["gpt-3.5-turbo"]
+    models = [model]
     status_dict: Dict[str, str] = {model: "" for model in models}
     filename = f"data/{name}_finetune_openai.jsonl"
 
     print(f"uploading file: {filename}")
     with open(file=filename, mode="rb") as source_file:
-        file = client.files.create(file=source_file, purpose="fine-tune")
+        file = _get_client().files.create(file=source_file, purpose="fine-tune")
 
     for model in models:
         job = create_finetune_job(name, file, model)
 
         while True:
-            job_update = client.fine_tuning.jobs.retrieve(job.id)
+            job_update = _get_client().fine_tuning.jobs.retrieve(job.id)
             if job_update.status in ["succeeded", "failed"]:
                 print(
                     f"Fine tune completed for model {model}",

@@ -23,17 +23,34 @@ def action_doc() -> str:
     return """
 The following actions are available:
 
+- interactive: Guided end-to-end session: sources, conversations, finetune.
+- tweets: Build a dataset from tweets via ariadne interactive.
 - fetch: Fetch the blog from Substack and store it in the data directory.
 - chunk: Chunk the blog into 4096 token pieces and store them in /data.
 - embed: Create embeddings for the chunks and store them.
 - ft:gen: Generate finetune files for the blog.
-- ft:run: Run the finetune job for the blog.
+- ft:run: Run the finetune job (OpenAI, or huggingface via opbdh).
 - bench:setup: Setup the benchmark for the blog.
 - ask: Ask a question about the blog content.
+
+ft:run routes by --model: OpenAI-finetunable ids go to the OpenAI API,
+anything else (an org/name huggingface id) is trained on a GPU pod via
+opbdh; unknown flags after the name are forwarded verbatim to
+`opbdh launch` (e.g. --vram-gb 48 --max-spend 5).
 """
 
 
-cmds = ["fetch", "chunk", "embed", "ft:gen", "ft:run", "bench:setup", "ask"]
+cmds = [
+    "interactive",
+    "tweets",
+    "fetch",
+    "chunk",
+    "embed",
+    "ft:gen",
+    "ft:run",
+    "bench:setup",
+    "ask",
+]
 
 
 def main() -> None:
@@ -51,7 +68,12 @@ def main() -> None:
         choices=cmds,
     )
 
-    parser.add_argument("name", help="The name of the blog to process.")
+    parser.add_argument(
+        "name",
+        nargs="?",
+        default="",
+        help="The name of the dataset to process.",
+    )
     parser.add_argument(
         "--oai",
         help="Only generate finetune or benchmark for openai \
@@ -75,10 +97,36 @@ def main() -> None:
         action="store_true",
         help="Skip usefulness check when summarizing memories",
     )
+    parser.add_argument(
+        "--model",
+        help="Model to finetune (ft:run): an OpenAI id, or a \
+            huggingface org/name id trained via opbdh.",
+        default="",
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="ft:run: never prompt; rely on flags and opbdh config.",
+    )
 
-    args = parser.parse_args()
+    args, extra = parser.parse_known_args()
 
-    if args.action == "fetch":
+    if args.action not in ("ft:run",) and extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
+
+    needs_name = args.action not in ("interactive", "tweets")
+    if needs_name and not args.name:
+        parser.error(f"the '{args.action}' action requires a dataset name")
+
+    if args.action == "interactive":
+        from .flows import run_interactive
+
+        run_interactive()
+    elif args.action == "tweets":
+        from .tweet_mode import run_tweet_mode
+
+        run_tweet_mode(args.name)
+    elif args.action == "fetch":
         substack_embeddings.main(args.name)
     elif args.action == "chunk":
         files_helper.chunker(args.name)
@@ -93,7 +141,29 @@ def main() -> None:
             generate_finetune.generate_finetune(args.name)
             oai_finetune.create_openai_finetune_file(args.name)
     elif args.action == "ft:run":
-        oai_finetune.run_oai_finetune(args.name)
+        from .hf_finetune import is_openai_finetunable, run_hf_finetune
+        from .interactive import ask
+
+        model = args.model
+        if not model and not args.no_interactive:
+            model = ask(
+                "Model to finetune (OpenAI id or huggingface org/name)",
+                "gpt-4o-mini-2024-07-18",
+            )
+        if is_openai_finetunable(model):
+            if extra:
+                parser.error(
+                    "opbdh flags only apply to huggingface models: "
+                    f"{' '.join(extra)}"
+                )
+            oai_finetune.run_oai_finetune(args.name, model=model)
+        else:
+            run_hf_finetune(
+                args.name,
+                model,
+                opbdh_args=extra,
+                interactive=not args.no_interactive,
+            )
     elif args.action == "bench:setup":
         if args.oai:
             oai_finetune.create_openai_finetune_file(args.name, "benchmark")
