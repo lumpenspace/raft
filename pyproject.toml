@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -10,7 +10,8 @@ dynamic = ["version"]
 description = "RAFT: Retrieval-Augmented Fine-Tuning — build persona datasets and finetune models on them."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "lumpenspace" }
 ]
@@ -19,7 +20,6 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -33,6 +33,7 @@ dependencies = [
   "pandas>=2.2",
   "python-dotenv>=1.0",
   "requests>=2.31",
+  "rich>=13.7",
   "tiktoken>=0.6",
 ]
 
@@ -59,7 +60,7 @@ packages = ["src/raft"]
 # Without this, hatchling's sdist default packs the repo root — including the
 # 1.9 MB of sample corpora and chroma databases under data/.
 [tool.hatch.build.targets.sdist]
-include = ["src/raft", "tests", "README.md"]
+include = ["src/raft", "tests", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

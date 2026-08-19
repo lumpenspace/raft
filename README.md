@@ -172,4 +172,4 @@ The following actions are available:
 
 ## Licence
 
-public domain, whatevs
+MIT
