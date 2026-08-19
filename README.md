@@ -19,6 +19,8 @@ Note from [@lumpenspace](http://x.com/lumpenspace):
 
 ok then, a friend asked so now it is more lenient with the version number and uses poetry for the dependencies. It's still a mess, but it's a more runnable mess.
 
+(2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
+
 ## 2.0
 
 New major version. Substack is no longer the only way in:
@@ -34,7 +36,8 @@ New major version. Substack is no longer the only way in:
   [ariadne](https://github.com/lumpenspace/ariadne)'s Python API to reconstruct reply
   branches, then imports them: thread texts become grounding documents, reply branches
   become q/a transcripts. The target's own tweets become the answers, whoever they were
-  replying to becomes the questioner. Install with `pip install 'raft[tweets]'`.
+  replying to becomes the questioner. Needs ariadne, which is not on PyPI (the
+  name is taken by the GraphQL library): `pip install git+https://github.com/lumpenspace/ariadne`.
 - **`raft ft:run <name> --model <model>`** — model routing. OpenAI-finetunable ids
   (gpt-4o-mini and friends) go through the OpenAI finetuning API as before. Any other
   model — i.e. a huggingface `org/name` id — is trained on a rented GPU pod via
@@ -50,12 +53,11 @@ New major version. Substack is no longer the only way in:
   Anything opbdh accepts (`--provider`, `--max-dollars-per-hour`, ...) can be appended
   and is forwarded to its Python API, and an `opbdh.json` in the project root works too.
   The trained adapter lands in `runpod_results/<run_id>/results/adapter`. Install with
-  `pip install 'raft[hf]'` (python ≥ 3.11) plus a one-time `opbdh config wizard`.
+  `pip install 'raft-ft[hf]'` (python ≥ 3.11) plus a one-time `opbdh config wizard`.
 
 Both integrations go through the two tools' Python APIs rather than shelling out, so
 raft gets the reconstructed threads and the run result as data — and surfaces their
-errors (spend guard tripped, remote job failed) directly. Install both with
-`pip install 'raft[all]'`.
+errors (spend guard tripped, remote job failed) directly.
 
 # RAFT / RATF
 
@@ -125,12 +127,32 @@ The fine-tuned model is then used to generate responses to the interviewer's que
 
 ### Installation
 
-use Poetry to install the dependencies and run the script; `poetry install`
+The distribution is named `raft-ft` (`raft` was taken on PyPI); the import and the
+CLI are still `raft`. Until the first `raft-ft` release lands on PyPI, install from
+git:
+
+```bash
+pip install git+https://github.com/lumpenspace/raft
+```
+
+Once released:
+
+```bash
+pip install raft-ft
+```
+
+For development, [uv](https://docs.astral.sh/uv/) manages the environment:
+
+```bash
+uv sync --extra dev --extra hf
+uv run pytest
+uv run ruff check .
+```
 
 ### Usage
 
 ```bash
-poetry run raft -h
+raft -h
 ```
 
 ```

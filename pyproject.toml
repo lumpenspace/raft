@@ -1,37 +1,74 @@
-[tool.poetry]
-name = "raft"
-version = "2.0.0"
-description = "Retrieval-Augmented Fine-Tuning"
-authors = ["lumpenspace <125578322+lumpenspace@users.noreply.github.com>"]
-license = "MIT"
-readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.9"
-chromadb = "^0.5.23"
-openai = "^1.14.3"
-beautifulsoup4 = "^4.12.3"
-requests = "^2.31.0"
-tiktoken = "^0.6.0"
-pandas = "^2.2.1"
-pynput = "^1.7.6"
-python-dotenv = "^1.0.1"
-# Tweet mode (`raft tweets`) and huggingface finetuning (`raft ft:run` with a
-# non-OpenAI model). Both are used through their Python APIs, and raft degrades
-# with an install hint when they are absent.
-ariadne = {git = "https://github.com/lumpenspace/ariadne", optional = true}
-opbdh = {version = "^1.3", optional = true}
-
-[tool.poetry.extras]
-tweets = ["ariadne"]
-hf = ["opbdh"]
-all = ["ariadne", "opbdh"]
-
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
 
+[project]
+# The distribution is `raft-ft` because `raft` is taken on PyPI; the import
+# and the CLI are still `raft`.
+name = "raft-ft"
+dynamic = ["version"]
+description = "RAFT: Retrieval-Augmented Fine-Tuning — build persona datasets and finetune models on them."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "lumpenspace" }
+]
+keywords = ["finetuning", "rag", "llm", "persona", "openai", "huggingface"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "chromadb>=1.0,<2",
+  "openai>=1.14",
+  "pandas>=2.2",
+  "python-dotenv>=1.0",
+  "requests>=2.31",
+  "tiktoken>=0.6",
+]
 
-[tool.poetry.scripts]
-raft = 'raft.cli:main'
+[project.urls]
+Homepage = "https://github.com/lumpenspace/raft"
+Issues = "https://github.com/lumpenspace/raft/issues"
+
+[project.scripts]
+raft = "raft.cli:main"
+
+[project.optional-dependencies]
+# Huggingface finetuning on a GPU pod (`raft ft:run` with a non-OpenAI model).
+hf = ["opbdh>=1.3"]
+# Tweet mode also needs ariadne, which is not on PyPI (the name is taken by
+# the GraphQL library): pip install git+https://github.com/lumpenspace/ariadne
+dev = ["build>=1.2", "pytest>=8.0", "ruff>=0.8", "twine>=5.0"]
+
+[tool.hatch.version]
+path = "src/raft/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/raft"]
+
+# Without this, hatchling's sdist default packs the repo root — including the
+# 1.9 MB of sample corpora and chroma databases under data/.
+[tool.hatch.build.targets.sdist]
+include = ["src/raft", "tests", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+# Pinned explicitly rather than inherited, mirroring opbdh: ruff's default
+# rule set changes between releases, and `ruff>=0.8` means CI can install any
+# of them. These are ruff's pre-0.16 defaults.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
