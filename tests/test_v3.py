@@ -150,6 +150,33 @@ class TestMarkupSafety(unittest.TestCase):
         self.assertEqual(hx.esc("[/] and list[int]"), r"\[/] and list\[int]")
 
 
+class TestMenuNavigation(unittest.TestCase):
+    def test_menu_step_keys(self):
+        from raft.hx import _menu_step
+
+        self.assertEqual(_menu_step("down", 0, 3), (1, False))
+        self.assertEqual(_menu_step("j", 1, 3), (2, False))
+        self.assertEqual(_menu_step("j", 2, 3), (0, False))  # wraps
+        self.assertEqual(_menu_step("up", 0, 3), (2, False))  # wraps
+        self.assertEqual(_menu_step("k", 2, 3), (1, False))
+        self.assertEqual(_menu_step("3", 0, 3), (2, False))  # digit jumps
+        self.assertEqual(_menu_step("9", 1, 3), (1, False))  # out of range
+        self.assertEqual(_menu_step("\r", 1, 3), (1, True))
+        self.assertEqual(_menu_step("\n", 2, 3), (2, True))
+        self.assertEqual(_menu_step("x", 1, 3), (1, False))  # unknown key
+        self.assertEqual(_menu_step("", 1, 3), (1, False))  # bare ESC
+
+    def test_choose_falls_back_without_a_tty(self):
+        # Piped runs must keep working: no tty means the numbered prompt.
+        import io
+        import sys
+
+        from raft.hx import _choose_with_keys
+
+        with mock.patch.object(sys, "stdin", io.StringIO()):
+            self.assertIsNone(_choose_with_keys("Pick", ["a", "b"], 0))
+
+
 class TestCorpusAppend(TempCwdTestCase):
     def test_dedupes_by_link_across_runs(self):
         records = [

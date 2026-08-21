@@ -24,6 +24,13 @@ and the mark `⟡`. raft's mint is the site's linked-node color.
   over a thin chrome-blue rule.
 - **Prompts**: accent `»` marker; defaults dim in brackets; choices numbered with
   accent numerals.
+- **Choosing**: on a tty, `choose` menus navigate with ↑/↓ or j/k (wrapping),
+  a digit jumps to that option, Enter confirms — and the menu collapses to a
+  one-line record of the choice so transcripts stay readable. Off-tty (pipes,
+  scripts) it falls back to the numbered prompt, so scripted input keeps
+  working. The key handling is hand-rolled termios + ANSI repaint — no extra
+  dependency, no screen takeover. opbdh's questionary prompts already behave
+  this way natively; `hx.questionary_style()` skins them to the palette.
 - **Status**: steps `◆` in accent; results `✓` green / `!` yellow / `✗` red; secondary
   detail dim.
 - **stdout is sacred**: all chrome goes to **stderr**, so piped output stays
