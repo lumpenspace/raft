@@ -7,6 +7,8 @@ from typing import Dict, Any, List
 from chromadb import PersistentClient
 from openai import OpenAI
 
+from .sources import date_num
+
 _client = None
 
 
@@ -66,7 +68,7 @@ def get_and_store_embedding(
     print("getting embeddings")
     embedding = get_embedding(qs)
 
-    meta: Dict[str, str] = (
+    meta: Dict[str, Any] = (
         {
             **metadata,
             **{"participants": ", ".join(metadata["participants"].values())},
@@ -74,8 +76,12 @@ def get_and_store_embedding(
         if "participants" in metadata
         else {"source": "participants"}
     )
+    # Comparable date for the earlier-writings-only retrieval filter.
+    meta["date_num"] = date_num(meta.get("date"))
 
-    collection.add(ids=id, embeddings=embedding, documents=qs, metadatas=meta)
+    # upsert, not add: add silently keeps the old record for an existing
+    # id, which would leave pre-2.3 entries without date_num forever.
+    collection.upsert(ids=id, embeddings=embedding, documents=qs, metadatas=meta)
 
     return embedding
 
@@ -96,9 +102,12 @@ def store_grounding_embeddings(name: str) -> None:
         for line in f:
             metadata, document = json.loads(line)
             print(f"Storing {metadata['title']}")
+            metadata["date_num"] = date_num(metadata.get("date"))
 
             embeddings = get_embedding(document)
-            collection.add(
+            # upsert so re-running embed refreshes existing chunks (and
+            # backfills date_num on collections from before 2.3).
+            collection.upsert(
                 ids=f"{metadata['title']}_part_{metadata['part']}",
                 embeddings=embeddings,
                 documents=document,

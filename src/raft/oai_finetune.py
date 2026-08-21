@@ -94,39 +94,51 @@ def create_finetune_job(name: str, file: Any, model: str) -> Any:
     return job
 
 
-def run_oai_finetune(name: str, model: str = "gpt-4o-mini-2024-07-18") -> None:
+def launch_oai_finetune(name: str, model: str) -> str:
     """
-    Run OpenAI fine-tuning for a given name.
+    Upload the dataset and create the fine-tuning job (without waiting).
+
+    Returns:
+        str: The job id, for wait_oai_finetune.
+    """
+    filename = f"data/{name}_finetune_openai.jsonl"
+    print(f"uploading file: {filename}")
+    with open(file=filename, mode="rb") as source_file:
+        file = _get_client().files.create(file=source_file, purpose="fine-tune")
+    return create_finetune_job(name, file, model).id
+
+
+def wait_oai_finetune(job_id: str) -> str:
+    """
+    Poll a fine-tuning job until it finishes.
+
+    Returns:
+        str: The finetuned model id, or "" if the job failed.
+    """
+    status = ""
+    while True:
+        job = _get_client().fine_tuning.jobs.retrieve(job_id)
+        if job.status in ["succeeded", "failed", "cancelled"]:
+            print(f"Fine tune {job.status}. Model ID: {job.fine_tuned_model}")
+            return job.fine_tuned_model or ""
+        if status != job.status:
+            print(f"Fine tune status: {job.status}")
+            status = job.status
+        time.sleep(2)
+
+
+def run_oai_finetune(name: str, model: str = "gpt-4o-mini-2024-07-18") -> str:
+    """
+    Run OpenAI fine-tuning for a given name, start to finish.
 
     Args:
         name (str): The name of the fine-tuning job.
         model (str): The OpenAI model to finetune.
+
+    Returns:
+        str: The finetuned model id, or "" if the job failed.
     """
-    models = [model]
-    status_dict: Dict[str, str] = {model: "" for model in models}
-    filename = f"data/{name}_finetune_openai.jsonl"
-
-    print(f"uploading file: {filename}")
-    with open(file=filename, mode="rb") as source_file:
-        file = _get_client().files.create(file=source_file, purpose="fine-tune")
-
-    for model in models:
-        job = create_finetune_job(name, file, model)
-
-        while True:
-            job_update = _get_client().fine_tuning.jobs.retrieve(job.id)
-            if job_update.status in ["succeeded", "failed"]:
-                print(
-                    f"Fine tune completed for model {model}",
-                    f"Model ID: {job_update.fine_tuned_model}",
-                )
-                status_dict[model] = job_update.status
-                break
-            if status_dict[model] != job_update.status:
-                print(f"Fine tune status for model {model}:")
-                print(job_update.status)
-                status_dict[model] = job_update.status
-            time.sleep(2)
+    return wait_oai_finetune(launch_oai_finetune(name, model))
 
 
 def create_openai_finetune_file(

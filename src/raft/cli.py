@@ -23,7 +23,7 @@ def action_doc() -> str:
     return """
 The following actions are available:
 
-- interactive: Guided end-to-end session: sources, conversations, finetune.
+- interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - tweets: Build a dataset from tweets via ariadne interactive.
 - fetch: Fetch the blog from Substack and store it in the data directory.
 - chunk: Chunk the blog into 4096 token pieces and store them in /data.
@@ -32,6 +32,7 @@ The following actions are available:
 - ft:run: Run the finetune job (OpenAI, or huggingface via opbdh).
 - bench:setup: Setup the benchmark for the blog.
 - ask: Ask a question about the blog content.
+- serve: Chat with the finetuned persona, retrieval-augmented.
 
 ft:run routes by --model: OpenAI-finetunable ids go to the OpenAI API,
 anything else (an org/name huggingface id) is trained on a GPU pod via
@@ -50,6 +51,7 @@ cmds = [
     "ft:run",
     "bench:setup",
     "ask",
+    "serve",
 ]
 
 
@@ -150,20 +152,25 @@ def main() -> None:
                 "Model to finetune (OpenAI id or huggingface org/name)",
                 "gpt-4o-mini-2024-07-18",
             )
+        from .state import record_finetuned_model
+
         if is_openai_finetunable(model):
             if extra:
                 parser.error(
                     "opbdh flags only apply to huggingface models: "
                     f"{' '.join(extra)}"
                 )
-            oai_finetune.run_oai_finetune(args.name, model=model)
+            model_id = oai_finetune.run_oai_finetune(args.name, model=model)
+            if model_id:
+                record_finetuned_model(args.name, model_id, "openai")
         else:
-            run_hf_finetune(
+            adapter = run_hf_finetune(
                 args.name,
                 model,
                 opbdh_args=extra,
                 interactive=not args.no_interactive,
             )
+            record_finetuned_model(args.name, adapter, "hf")
     elif args.action == "bench:setup":
         if args.oai:
             oai_finetune.create_openai_finetune_file(args.name, "benchmark")
@@ -172,6 +179,10 @@ def main() -> None:
         else:
             generate_finetune.generate_benchmark(args.name)
             oai_finetune.create_openai_finetune_file(args.name, "benchmark")
+    elif args.action == "serve":
+        from .serve import run_serve
+
+        run_serve(args.name, model=args.model)
     elif args.action == "ask":
         if args.question is None:
             print("Please provide a question using the --question argument.")

@@ -28,6 +28,10 @@ and the mark `⟡`. raft's mint is the site's linked-node color.
   detail dim.
 - **stdout is sacred**: all chrome goes to **stderr**, so piped output stays
   machine-clean.
+- **Text arguments are data**: every helper escapes its message/prompt/option
+  strings before interpolating them into rich markup (`hx.esc`) — file paths,
+  model ids, and scraped document text must never reach the markup parser
+  (a stray `[/]` would raise, `[int]` would vanish).
 - **Degrade**: plain ASCII, no color, when stderr is not a tty or `NO_COLOR` /
   `HYPERPLEX_PLAIN` is set.
 

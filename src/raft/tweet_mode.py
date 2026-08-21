@@ -8,19 +8,17 @@ documents (data/{name}.jsonl, ready for `raft chunk`) and reply branches
 become q/a transcripts (ready for `raft ft:gen`).
 """
 
-import json
 import os
-from datetime import datetime
-from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List
 
 from .convo_structurer import messages_to_exchanges, write_transcript
 from . import hx
 from .interactive import ask, ask_path, bail, choose, confirm
+from .sources import iso_date  # noqa: F401  (re-exported; used below)
 
 ARIADNE_INSTALL_HINT = (
     "ariadne is not installed. Install it with:\n"
-    "  pip install git+https://github.com/lumpenspace/ariadne"
+    "  pip install ariadne-x"
 )
 
 # Tweet conversations are short; batch them so generate_finetune doesn't
@@ -37,7 +35,7 @@ def load_ariadne():
     if not hasattr(ariadne, "build"):
         bail(
             "the installed ariadne is too old for raft 2.0 (no Python API).\n"
-            "Upgrade with: pip install -U git+https://github.com/lumpenspace/ariadne"
+            "Upgrade with: pip install -U ariadne-x"
         )
     return ariadne
 
@@ -89,27 +87,6 @@ def ask_build_options() -> Dict[str, Any]:
     return options
 
 
-def iso_date(value: Any) -> str:
-    """
-    Normalise a tweet timestamp to YYYY-MM-DD.
-
-    Archive exports carry Twitter's legacy format ("Mon Jan 01 12:00:00
-    +0000 2024") while the API returns ISO 8601, so slicing the string is
-    not enough.
-    """
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
-    except ValueError:
-        pass
-    try:
-        return parsedate_to_datetime(text).date().isoformat()
-    except (TypeError, ValueError, IndexError):
-        return ""
-
-
 def import_documents(name: str, documents: List[Dict[str, Any]], target: str) -> None:
     """
     Import ariadne raft documents as grounding corpus + transcripts.
@@ -119,46 +96,45 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
         documents (List[Dict[str, Any]]): raft.documents.v1 objects.
         target (str): Handle/name of the person being emulated.
     """
+    from .sources import append_corpus_records
+
     os.makedirs("data", exist_ok=True)
     corpus_path = f"data/{name}.jsonl"
     # Ariadne reports usernames without the leading @; match on the bare handle.
     handle = target.lstrip("@")
     seen_ids = set()
-    n_docs = 0
+    records: List[Dict[str, Any]] = []
 
     all_exchanges: List[List[str]] = []
     first_date = ""
 
-    with open(corpus_path, "a") as corpus:
-        for doc in documents:
-            meta = doc.get("metadata", {})
-            doc_id = doc.get("id") or str(meta.get("tweet_ids"))
-            if doc_id in seen_ids:
-                continue
-            seen_ids.add(doc_id)
+    for doc in documents:
+        meta = doc.get("metadata", {})
+        doc_id = doc.get("id") or str(meta.get("tweet_ids"))
+        if doc_id in seen_ids:
+            continue
+        seen_ids.add(doc_id)
 
-            text = (doc.get("text") or "").strip()
-            date = iso_date(meta.get("target_created_at"))
-            if text:
-                corpus.write(
-                    json.dumps(
-                        {
-                            "title": f"tweet thread {meta.get('target_id', doc_id)}",
-                            "link": meta.get("target_url") or "",
-                            "date": date or "unknown",
-                            "content": text,
-                        }
-                    )
-                    + "\n"
-                )
-                n_docs += 1
-
-            exchanges, _ = messages_to_exchanges(
-                normalize_messages(doc.get("messages") or [], handle), handle
+        text = (doc.get("text") or "").strip()
+        date = iso_date(meta.get("target_created_at"))
+        if text:
+            records.append(
+                {
+                    "title": f"tweet thread {meta.get('target_id', doc_id)}",
+                    "link": meta.get("target_url") or "",
+                    "date": date or "unknown",
+                    "content": text,
+                }
             )
-            if exchanges and not first_date:
-                first_date = date
-            all_exchanges.extend(exchanges)
+
+        exchanges, _ = messages_to_exchanges(
+            normalize_messages(doc.get("messages") or [], handle), handle
+        )
+        if exchanges and not first_date:
+            first_date = date
+        all_exchanges.extend(exchanges)
+
+    n_docs = append_corpus_records(name, records)
 
     n_transcripts = 0
     for start in range(0, len(all_exchanges), EXCHANGES_PER_TRANSCRIPT):
@@ -248,7 +224,7 @@ def _gather_bluesky(ariadne, name: str, default_handle: str) -> int:
     if not hasattr(ariadne, "build_bluesky"):
         hx.warn(
             "the installed ariadne is too old for Bluesky -- upgrade with:\n"
-            "  pip install -U git+https://github.com/lumpenspace/ariadne"
+            "  pip install -U ariadne-x"
         )
         return 0
     handle = ask(

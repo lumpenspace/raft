@@ -300,10 +300,10 @@ def import_text_source_file(name: str, path: str) -> int:
     grounding corpus data/{name}.jsonl.
 
     Returns:
-        int: Number of documents appended.
+        int: Number of documents appended (already-imported links are
+        skipped, so re-adding a file only imports what is new).
     """
-    corpus_path = f"data/{name}.jsonl"
-    os.makedirs("data", exist_ok=True)
+    from .sources import append_corpus_records
 
     with open(path) as f:
         raw = f.read()
@@ -329,10 +329,4 @@ def import_text_source_file(name: str, path: str) -> int:
             }
         ]
 
-    with open(corpus_path, "a") as f:
-        for record in records:
-            record.setdefault("title", "untitled")
-            record.setdefault("link", path)
-            record.setdefault("date", datetime.now(timezone.utc).date().isoformat())
-            f.write(json.dumps(record) + "\n")
-    return len(records)
+    return append_corpus_records(name, records)
