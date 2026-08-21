@@ -21,6 +21,39 @@ ok then, a friend asked so now it is more lenient with the version number and us
 
 (2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
 
+## 2.3
+
+`raft interactive` grew into a five-phase session, resumable per dataset —
+what exists on disk (plus `data/{name}_meta.json`) tells it where you left
+off, and it suggests the next phase:
+
+1. **gather** — documents and conversations, one source at a time, combined
+   into one dataset. New document sources beside substack / tweets / local
+   files: any **RSS/Atom feed** (a plain site URL works too — raft follows its
+   `rel=alternate` feed link, and teaser-only entries get their linked page
+   fetched in full), **single URLs**, and **PDFs**
+   (`pip install 'raft-ft[pdf]'`). Re-adding a source only imports what is
+   new (deduplicated by link).
+2. **prep** — chunk + embed, then generate the finetune examples. Retrieval
+   now only surfaces the target's *earlier* writings: chunks carry a
+   comparable `date_num`, and each exchange's memory query is filtered to
+   documents dated before the interview; unknown-dated documents stay
+   retrievable. A collection embedded before 2.3 has no `date_num`, so raft
+   warns and skips the filter — re-running `raft embed` (embedding is now an
+   upsert) backfills it and turns the filter on.
+3. **train** — pick the venue (the OpenAI finetuning API, or a huggingface
+   model on a GPU pod via opbdh) and the model. While the job runs, raft
+   collects **test questions**, showing for each which documents and tweets
+   retrieval will put in the persona's context; the finetuned model id (or
+   adapter path) is recorded in the dataset meta.
+4. **eval** — generate the benchmark files (when a benchmark transcript
+   exists) and run the stored test questions against the finetuned model,
+   retrieval context shown alongside each answer.
+5. **serve** — also standalone as **`raft serve <name>`**: chat with the
+   persona, retrieval-augmented, every turn showing what landed in context
+   (answers on stdout, chrome on stderr, so it pipes). OpenAI finetunes are
+   served directly; for a LoRA adapter raft prints a serving recipe instead.
+
 ## 2.0
 
 New major version. Substack is no longer the only way in:

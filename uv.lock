@@ -2489,6 +2489,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pypdf"
+version = "6.16.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/5a/df92d1c1ef8806ca28f20f978ee059894868d93de797a7e2edebe7fe1a43/pypdf-6.16.1.tar.gz", hash = "sha256:c4d1b43ddae921387321cf63936cd16a7743b91d2da92f165c149a195c972ba9", size = 7003737 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/a1/724b18d6757ab7253a8fecd3a430eb8d980ed26872ba16651e7b5ddfc63f/pypdf-6.16.1-py3-none-any.whl", hash = "sha256:63fec31c4092ae50b6729beedcb469055b60d20c834bde1c402df241f371f644", size = 382924 },
+]
+
+[[package]]
 name = "pypika"
 version = "0.51.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2621,7 +2630,7 @@ wheels = [
 
 [[package]]
 name = "raft-ft"
-version = "2.1.0"
+version = "2.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -2644,6 +2653,9 @@ dev = [
 hf = [
     { name = "opbdh" },
 ]
+pdf = [
+    { name = "pypdf" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2653,6 +2665,7 @@ requires-dist = [
     { name = "opbdh", marker = "extra == 'hf'", specifier = ">=1.3" },
     { name = "openai", specifier = ">=1.14" },
     { name = "pandas", specifier = ">=2.2" },
+    { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "requests", specifier = ">=2.31" },

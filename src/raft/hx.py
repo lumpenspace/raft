@@ -49,6 +49,19 @@ def console():
     return _console
 
 
+def esc(text: str) -> str:
+    """
+    Escape text for interpolation into rich markup.
+
+    Every helper below runs its text arguments through this: messages
+    routinely carry file paths, model ids and scraped document text, and
+    a stray `[/]` in those must never reach the markup parser.
+    """
+    from rich.markup import escape
+
+    return escape(text)
+
+
 def banner(tagline: str = "") -> None:
     """`{sigil} {tool} · ⟡ hyperplex` over a thin chrome rule."""
     c = console()
@@ -57,7 +70,7 @@ def banner(tagline: str = "") -> None:
         return
     line = f"[bold {ACCENT}]{SIGIL} {TOOL}[/]  [dim]·[/]  [{CHROME}]{MARK} hyperplex[/]"
     if tagline:
-        line += f"  [dim]· {tagline}[/]"
+        line += f"  [dim]· {esc(tagline)}[/]"
     c.print(line)
     c.print(f"[{CHROME}]{'─' * min(46, c.width)}[/]")
 
@@ -68,7 +81,7 @@ def step(message: str) -> None:
     if c is None:
         print(f"* {message}", file=sys.stderr)
     else:
-        c.print(f"[bold {ACCENT}]◆[/] {message}")
+        c.print(f"[bold {ACCENT}]◆[/] {esc(message)}")
 
 
 def say(message: str) -> None:
@@ -76,7 +89,7 @@ def say(message: str) -> None:
     if c is None:
         print(message, file=sys.stderr)
     else:
-        c.print(f"[dim]{message}[/]")
+        c.print(f"[dim]{esc(message)}[/]")
 
 
 def ok(message: str) -> None:
@@ -84,7 +97,7 @@ def ok(message: str) -> None:
     if c is None:
         print(f"ok: {message}", file=sys.stderr)
     else:
-        c.print(f"[green]✓[/] {message}")
+        c.print(f"[green]✓[/] {esc(message)}")
 
 
 def warn(message: str) -> None:
@@ -92,7 +105,7 @@ def warn(message: str) -> None:
     if c is None:
         print(f"warning: {message}", file=sys.stderr)
     else:
-        c.print(f"[yellow]![/] {message}")
+        c.print(f"[yellow]![/] {esc(message)}")
 
 
 def fail(message: str) -> None:
@@ -100,7 +113,7 @@ def fail(message: str) -> None:
     if c is None:
         print(f"error: {message}", file=sys.stderr)
     else:
-        c.print(f"[bold red]✗[/] {message}")
+        c.print(f"[bold red]✗[/] {esc(message)}")
 
 
 def _read(prompt_markup: str, prompt_plain: str) -> str:
@@ -112,11 +125,11 @@ def _read(prompt_markup: str, prompt_plain: str) -> str:
 
 def ask(prompt: str, default: Optional[str] = None) -> str:
     """Ask for a free-form value; empty input returns the default."""
-    suffix = f" [dim]\\[{default}][/]" if default else ""
+    suffix = f" [dim]\\[{esc(default)}][/]" if default else ""
     plain_suffix = f" [{default}]" if default else ""
     while True:
         answer = _read(
-            f"[bold {ACCENT}]»[/] {prompt}{suffix} ",
+            f"[bold {ACCENT}]»[/] {esc(prompt)}{suffix} ",
             f"> {prompt}{plain_suffix} ",
         )
         if answer:
@@ -130,7 +143,7 @@ def confirm(prompt: str, default: bool = True) -> bool:
     hint = "Y/n" if default else "y/N"
     while True:
         answer = _read(
-            f"[bold {ACCENT}]»[/] {prompt} [dim]\\[{hint}][/] ",
+            f"[bold {ACCENT}]»[/] {esc(prompt)} [dim]\\[{hint}][/] ",
             f"> {prompt} [{hint}] ",
         ).lower()
         if not answer:
@@ -150,11 +163,11 @@ def choose(prompt: str, options: List[str], default: Optional[int] = None) -> in
             marker = "*" if default is not None and i == default else " "
             print(f" {marker} {i + 1}) {option}", file=sys.stderr)
     else:
-        c.print(f"\n{prompt}")
+        c.print(f"\n{esc(prompt)}")
         for i, option in enumerate(options):
             is_default = default is not None and i == default
             marker = f"[bold {ACCENT}]{i + 1}[/]"
-            label = f"[bold]{option}[/]" if is_default else option
+            label = f"[bold]{esc(option)}[/]" if is_default else esc(option)
             suffix = " [dim](default)[/]" if is_default else ""
             c.print(f"  {marker}) {label}{suffix}")
     while True:

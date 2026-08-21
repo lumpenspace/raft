@@ -209,7 +209,7 @@ def run_hf_finetune(
     model: str,
     opbdh_args: Optional[List[str]] = None,
     interactive: bool = False,
-) -> None:
+) -> str:
     """
     Launch a huggingface finetune on a GPU pod via opbdh.
 
@@ -220,6 +220,9 @@ def run_hf_finetune(
             to `opbdh launch` (on top of any opbdh.json config).
         interactive (bool): Ask for missing settings instead of relying
             on opbdh defaults/config.
+
+    Returns:
+        str: The local path of the trained LoRA adapter.
     """
     opbdh = load_opbdh()
     if not model:
@@ -265,4 +268,6 @@ def run_hf_finetune(
     except RuntimeError as e:
         bail(f"the finetune failed on the pod: {e}")
 
-    hx.ok(f"done — the LoRA adapter is in {result.outputs_dir / 'adapter'}")
+    adapter = str(result.outputs_dir / "adapter")
+    hx.ok(f"done — the LoRA adapter is in {adapter}")
+    return adapter

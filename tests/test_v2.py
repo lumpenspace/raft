@@ -176,16 +176,17 @@ class TestTextSources(TempCwdTestCase):
         self.assertEqual(record["content"], "a long essay about parrots")
         self.assertEqual(record["title"], "essay")
 
-    def test_structured_jsonl_passes_through_and_appends(self):
+    def test_structured_jsonl_passes_through_and_dedupes_on_reimport(self):
         with open("posts.jsonl", "w") as f:
             f.write(json.dumps({"title": "t1", "link": "u1",
                                 "date": "2024-01-01", "content": "c1"}) + "\n")
             f.write(json.dumps({"title": "t2", "link": "u2",
                                 "date": "2024-01-02", "content": "c2"}) + "\n")
         self.assertEqual(import_text_source_file("d", "posts.jsonl"), 2)
-        self.assertEqual(import_text_source_file("d", "posts.jsonl"), 2)
+        # re-adding the same source only imports what is new (by link)
+        self.assertEqual(import_text_source_file("d", "posts.jsonl"), 0)
         records = self.read_jsonl("data/d.jsonl")
-        self.assertEqual(len(records), 4)
+        self.assertEqual(len(records), 2)
         self.assertEqual(records[0]["title"], "t1")
 
 
