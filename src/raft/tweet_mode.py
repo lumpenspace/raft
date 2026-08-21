@@ -214,6 +214,13 @@ def _gather_x(ariadne, name: str, default_handle: str) -> int:
         return 0
     hx.ok(f"reconstructed {len(documents)} X thread(s)")
     result.save_cache()
+    # ariadne >= 0.6 records what it could not fetch in its cache.
+    unresolved = getattr(result, "unresolved_ids", lambda: [])()
+    if unresolved:
+        hx.say(
+            f"{len(unresolved)} referenced tweet(s) could not be fetched; "
+            "recover them later with `ariadne cache retry`, then re-run tweet mode"
+        )
     handle = options.get("target_user") or options.get("for_user") or default_handle
     import_documents(name, documents, handle)
     return len(documents)
