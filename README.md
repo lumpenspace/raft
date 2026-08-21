@@ -31,13 +31,17 @@ New major version. Substack is no longer the only way in:
   imported as-is; unstructured ones (raw chat logs, podcast transcripts, whatever) are
   converted into transcript datasets with an LLM (`RAFT_LLM_MODEL`, default `gpt-4o`).
   Then chunk/embed/ft:gen/ft:run, each step optional.
-- **`raft tweets`** — tweet mode. Asks where the tweets come from (archive export,
-  CSV/JSON dump, or a public handle fetched live) and calls
+- **`raft tweets`** — tweet mode. First asks which network(s) to draw from — **X /
+  Twitter**, **Bluesky**, or **both, merged into one dataset** — then calls
   [ariadne](https://github.com/lumpenspace/ariadne)'s Python API to reconstruct reply
-  branches, then imports them: thread texts become grounding documents, reply branches
-  become q/a transcripts. The target's own tweets become the answers, whoever they were
-  replying to becomes the questioner. Needs ariadne, which is not on PyPI (the
-  name is taken by the GraphQL library): `pip install git+https://github.com/lumpenspace/ariadne`.
+  branches and imports them: thread texts become grounding documents, reply branches
+  become q/a transcripts. The target's own posts become the answers, whoever they were
+  replying to becomes the questioner. For X you choose the source (archive export,
+  CSV/JSON dump, or a public handle) and can add the **Community Archive**
+  (community-archive.org — no key, and it completes reply threads whose parents were
+  authored by other people) and/or a **twitterapi.io** key. Bluesky needs nothing but a
+  handle. Needs ariadne (≥ 0.4), which is not on PyPI (the name is taken by the GraphQL
+  library): `pip install git+https://github.com/lumpenspace/ariadne`.
 - **`raft ft:run <name> --model <model>`** — model routing. OpenAI-finetunable ids
   (gpt-4o-mini and friends) go through the OpenAI finetuning API as before. Any other
   model — i.e. a huggingface `org/name` id — is trained on a rented GPU pod via

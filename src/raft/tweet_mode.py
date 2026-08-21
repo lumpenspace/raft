@@ -76,6 +76,16 @@ def ask_build_options() -> Dict[str, Any]:
     if confirm("Only use replies as conversation starts?", default=False):
         options["replies_only"] = True
 
+    if confirm(
+        "Also use the Community Archive? (completes cross-account threads, no key)",
+        default=True,
+    ):
+        options["community_archive"] = True
+
+    key = ask("twitterapi.io API key (paid; empty to skip)", "")
+    if key:
+        options["twitterapi_key"] = key
+
     return options
 
 
@@ -215,6 +225,50 @@ def normalize_messages(
     return normalized
 
 
+def _gather_x(ariadne, name: str, default_handle: str) -> int:
+    """Run the X/Twitter branch and import its documents. Returns doc count."""
+    options = ask_build_options()
+    hx.step("reconstructing X threads with ariadne")
+    result = ariadne.build(**options)
+    for warning in result.warnings[:10]:
+        hx.say(f"note: {warning}")
+    documents = result.raft_documents()
+    if not documents:
+        hx.warn("no X conversations were reconstructed")
+        return 0
+    hx.ok(f"reconstructed {len(documents)} X thread(s)")
+    result.save_cache()
+    handle = options.get("target_user") or options.get("for_user") or default_handle
+    import_documents(name, documents, handle)
+    return len(documents)
+
+
+def _gather_bluesky(ariadne, name: str, default_handle: str) -> int:
+    """Run the Bluesky branch and import its documents. Returns doc count."""
+    if not hasattr(ariadne, "build_bluesky"):
+        hx.warn(
+            "the installed ariadne is too old for Bluesky -- upgrade with:\n"
+            "  pip install -U git+https://github.com/lumpenspace/ariadne"
+        )
+        return 0
+    handle = ask(
+        "Bluesky handle (e.g. alice.bsky.social)",
+        default_handle.lstrip("@") if "." in default_handle else None,
+    )
+    since = ask("Only posts on or after [YYYY-MM-DD] (empty = all)", "")
+    hx.step("reconstructing Bluesky threads")
+    result = ariadne.build_bluesky(handle, since=since or None, allow_empty=True)
+    for warning in result.warnings[:10]:
+        hx.say(f"note: {warning}")
+    documents = result.raft_documents()
+    if not documents:
+        hx.warn("no Bluesky conversations were reconstructed")
+        return 0
+    hx.ok(f"reconstructed {len(documents)} Bluesky thread(s)")
+    import_documents(name, documents, handle.lstrip("@"))
+    return len(documents)
+
+
 def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) -> None:
     """
     Run the interactive tweet-mode flow end to end.
@@ -226,31 +280,30 @@ def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) ->
             False when called as one step of `raft interactive`.
     """
     if standalone:
-        hx.banner("tweets -> persona dataset, via ariadne")
+        hx.banner("posts -> persona dataset, via ariadne")
     ariadne = load_ariadne()
 
-    options = ask_build_options()
+    network = choose(
+        "Which network(s) should the dataset draw from?",
+        ["X / Twitter", "Bluesky", "both -- merge into one dataset"],
+        default=0,
+    )
+    want_x = network in (0, 2)
+    want_bsky = network in (1, 2)
+
     if not target:
-        target = ask(
-            "Target to emulate (handle or name)",
-            options.get("target_user") or options.get("for_user") or None,
-        )
+        target = ask("Target to emulate (handle or name)")
     if not name:
         name = ask("Dataset name", target.lstrip("@").lower())
 
-    hx.step("reconstructing tweet threads with ariadne")
-    result = ariadne.build(**options)
+    total = 0
+    if want_x:
+        total += _gather_x(ariadne, name, target)
+    if want_bsky:
+        total += _gather_bluesky(ariadne, name, target)
 
-    for warning in result.warnings[:10]:
-        hx.say(f"note: {warning}")
-    if not result.conversations:
-        bail("ariadne reconstructed no conversations from that source")
-
-    documents = result.raft_documents()
-    hx.ok(f"reconstructed {len(documents)} thread(s)")
-    result.save_cache()
-
-    import_documents(name, documents, target)
+    if total == 0:
+        bail("no conversations were reconstructed from the chosen source(s)")
 
     if not standalone:
         return

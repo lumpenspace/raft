@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hyperplex-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/claudiobrandolino/projects/hyperplex", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

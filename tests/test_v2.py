@@ -256,6 +256,42 @@ class TestTweetMode(TempCwdTestCase):
         transcript = self.read_json("data/tw_transcript_1.json")
         self.assertEqual(transcript["exchanges"], [["hot take 0?", "reply 0"]])
 
+    def test_x_and_bluesky_merge_into_one_dataset(self):
+        # Two networks import into the same dataset name with their own handles;
+        # the corpus and transcripts merge, ids never collide across networks.
+        x_doc = {
+            "format": "raft.documents.v1", "id": "ariadne:100",
+            "text": "@rando: q?\n\n@gary: a",
+            "metadata": {"target_id": "100", "target_created_at": "2024-03-01T10:00:00Z",
+                         "target_url": "https://x.com/gary/status/100"},
+            "messages": [
+                {"role": "assistant", "author": "@rando", "username": "rando", "text": "q?"},
+                {"role": "participant", "author": "@gary", "username": "gary", "text": "a"},
+            ],
+        }
+        bsky_doc = {
+            "format": "raft.documents.v1", "id": "ariadne:at://did/app.bsky.feed.post/r2",
+            "text": "@al.bsky: hi\n\n@gary.bsky: yo",
+            "metadata": {"target_id": "at://did/app.bsky.feed.post/r2",
+                         "target_created_at": "2024-04-01T00:00:00Z",
+                         "target_url": "https://bsky.app/profile/gary.bsky/post/r2"},
+            "messages": [
+                {"role": "assistant", "author": "@al.bsky", "username": "al.bsky", "text": "hi"},
+                {"role": "participant", "author": "@gary.bsky", "username": "gary.bsky", "text": "yo"},
+            ],
+        }
+        import_documents("merged", [x_doc], "gary")
+        import_documents("merged", [bsky_doc], "gary.bsky")
+
+        corpus = self.read_jsonl("data/merged.jsonl")
+        self.assertEqual(sorted(c["date"] for c in corpus), ["2024-03-01", "2024-04-01"])
+        t1 = self.read_json("data/merged_transcript_1.json")
+        t2 = self.read_json("data/merged_transcript_2.json")
+        self.assertEqual(t1["exchanges"], [["q?", "a"]])
+        self.assertEqual(t1["participants"]["a"], "gary")
+        self.assertEqual(t2["exchanges"], [["hi", "yo"]])
+        self.assertEqual(t2["participants"]["a"], "gary.bsky")
+
     def test_archive_style_dates_are_normalized(self):
         # Archive exports use Twitter's legacy stamp, not ISO 8601.
         self.assertEqual(iso_date("Mon Jan 01 12:05:00 +0000 2024"), "2024-01-01")
