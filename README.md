@@ -73,8 +73,8 @@ New major version. Substack is no longer the only way in:
   CSV/JSON dump, or a public handle) and can add the **Community Archive**
   (community-archive.org — no key, and it completes reply threads whose parents were
   authored by other people) and/or a **twitterapi.io** key. Bluesky needs nothing but a
-  handle. Needs ariadne (≥ 0.4), which is not on PyPI (the name is taken by the GraphQL
-  library): `pip install git+https://github.com/lumpenspace/ariadne`.
+  handle. Needs ariadne (≥ 0.4), published on PyPI as ariadne-x (the bare name is taken by
+  the GraphQL library): `pip install ariadne-x`.
 - **`raft ft:run <name> --model <model>`** — model routing. OpenAI-finetunable ids
   (gpt-4o-mini and friends) go through the OpenAI finetuning API as before. Any other
   model — i.e. a huggingface `org/name` id — is trained on a rented GPU pod via

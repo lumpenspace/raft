@@ -18,7 +18,7 @@ from .sources import iso_date  # noqa: F401  (re-exported; used below)
 
 ARIADNE_INSTALL_HINT = (
     "ariadne is not installed. Install it with:\n"
-    "  pip install git+https://github.com/lumpenspace/ariadne"
+    "  pip install ariadne-x"
 )
 
 # Tweet conversations are short; batch them so generate_finetune doesn't
@@ -35,7 +35,7 @@ def load_ariadne():
     if not hasattr(ariadne, "build"):
         bail(
             "the installed ariadne is too old for raft 2.0 (no Python API).\n"
-            "Upgrade with: pip install -U git+https://github.com/lumpenspace/ariadne"
+            "Upgrade with: pip install -U ariadne-x"
         )
     return ariadne
 
@@ -224,7 +224,7 @@ def _gather_bluesky(ariadne, name: str, default_handle: str) -> int:
     if not hasattr(ariadne, "build_bluesky"):
         hx.warn(
             "the installed ariadne is too old for Bluesky -- upgrade with:\n"
-            "  pip install -U git+https://github.com/lumpenspace/ariadne"
+            "  pip install -U ariadne-x"
         )
         return 0
     handle = ask(
