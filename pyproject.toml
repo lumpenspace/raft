@@ -28,7 +28,13 @@ classifiers = [
 ]
 dependencies = [
   "beautifulsoup4>=4.12",
-  "chromadb>=1.0,<2",
+  # >=1.5.9: CVE-2026-45829, a pre-auth RCE in chroma's Python FastAPI
+  # server, is unpatched as of 1.5.9 and affects every earlier 1.x release
+  # too. raft only uses the embedded PersistentClient and never runs that
+  # server, so it isn't exposed; the floor keeps the resolver off the
+  # older releases and should move to the first fixed version once chroma
+  # ships one.
+  "chromadb>=1.5.9,<2",
   "openai>=1.14",
   "pandas>=2.2",
   "python-dotenv>=1.0",
