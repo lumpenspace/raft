@@ -37,8 +37,8 @@ The following actions are available:
 
 ft:run routes by --model: OpenAI-finetunable ids go to the OpenAI API,
 anything else (an org/name huggingface id) is trained on a GPU pod via
-opbdh; unknown flags after the name are forwarded verbatim to
-`opbdh launch` (e.g. --vram-gb 48 --max-spend 5).
+opbdh; extra flags after the name configure
+opbdh SFT and GPU settings (e.g. --method qlora --provider primeintellect).
 """
 
 
@@ -185,7 +185,8 @@ def main() -> None:
                 opbdh_args=extra,
                 interactive=not args.no_interactive,
             )
-            record_finetuned_model(dataset, adapter, "hf")
+            if adapter:
+                record_finetuned_model(dataset, adapter, "hf")
     elif args.action == "bench:setup":
         if args.oai:
             oai_finetune.create_openai_finetune_file(dataset, "benchmark")

@@ -340,7 +340,7 @@ def phase_train(name: str) -> None:
         "Where should the finetune run?",
         [
             "OpenAI finetuning API (hosted; gpt-4o-mini and friends)",
-            "a GPU pod via opbdh (runpod; any huggingface model)",
+            "a GPU via opbdh (RunPod / Prime Intellect multi-cloud)",
         ],
         default=0,
     )
@@ -378,7 +378,8 @@ def phase_train(name: str) -> None:
         ):
             return
         adapter = run_hf_finetune(name, model, interactive=True)
-        state.record_finetuned_model(name, adapter, "hf")
+        if adapter:
+            state.record_finetuned_model(name, adapter, "hf")
 
 
 def phase_eval(name: str) -> None:

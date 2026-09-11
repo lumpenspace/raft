@@ -20,7 +20,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package with dev dependencies
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,hf]"
 
       - name: Lint
         run: ruff check .

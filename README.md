@@ -100,19 +100,25 @@ New major version. Substack is no longer the only way in:
 - **`raft ft:run <name> --model <model>`** — model routing. OpenAI-finetunable ids
   (gpt-4o-mini and friends) go through the OpenAI finetuning API as before. Any other
   model — i.e. a huggingface `org/name` id — is trained on a rented GPU pod via
-  [opbdh](https://github.com/lumpenspace/opbdh): raft generates a self-contained LoRA SFT
-  run directory (script + requirements + dataset) and hands it to `opbdh launch`.
-  Interactively it helps you pick the model (`opbdh models search`) and size the pod;
-  non-interactively, opbdh settings pass straight through:
+  [opbdh](https://github.com/lumpenspace/opbdh)'s native finetuning facility (≥ 1.10.0).
+  RAFT imports the generated examples into a resumable recipe; opbdh creates the SFT
+  runner, estimates resources per GPU, launches training, and retrieves the adapter.
+  Choose **RunPod** or **Prime Intellect's multi-cloud GPU marketplace**: there are
+  many GPU and cloud options beyond RunPod, through these two provider backends.
 
   ```bash
-  raft ft:run garymarcus --model Qwen/Qwen2.5-7B-Instruct --vram-gb 48 --max-spend 5
+  pip install -U 'raft-ft[hf]'
+  opbdh config wizard
+  raft ft:run garymarcus --model Qwen/Qwen2.5-7B-Instruct --provider primeintellect --method qlora --max-spend 5
   ```
 
-  Anything opbdh accepts (`--provider`, `--max-dollars-per-hour`, ...) can be appended
-  and is forwarded to its Python API, and an `opbdh.json` in the project root works too.
-  The trained adapter lands in `runpod_results/<run_id>/results/adapter`. Install with
-  `pip install 'raft-ft[hf]'` (python ≥ 3.11) plus a one-time `opbdh config wizard`.
+  Native recipe options include `--epochs`, `--learning-rate`, `--max-length`,
+  `--batch-size`, `--gradient-accumulation`, and `--recipe`. GPU options include
+  `--gpu-count`, `--vram-gb`, and `--max-dollars-per-hour`; a project-root
+  `opbdh.json` works too. `--dry-run` previews the launch without renting compute
+  or recording a trained model. RAFT supports LoRA and QLoRA adapters.
+  The command prints the native recipe directory, where `opbdh ft` can resume the
+  workflow, and returns the synced `model/` adapter directory after training.
 
 Both integrations go through the two tools' Python APIs rather than shelling out, so
 raft gets the reconstructed threads and the run result as data — and surfaces their
