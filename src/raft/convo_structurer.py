@@ -17,11 +17,13 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
 from . import hx
+from .project import DatasetLike, dataset_paths
 
 STRUCTURER_MODEL = os.environ.get("RAFT_LLM_MODEL", "gpt-4o")
 
@@ -35,7 +37,9 @@ You extract question/answer exchanges from a raw conversation record
 The target is the person being emulated: their utterances are answers,
 everyone else's are questions. Merge consecutive utterances by the same
 side. Drop utterances that are not part of a question/answer flow
-(stage directions, ads, timestamps).
+(stage directions, ads, timestamps). Extract only exchanges present in the source.
+Never invent questions or turn an essay into synthetic conversation.
+Return an empty exchanges array when no conversation is present.
 
 Reply with JSON only, in this exact shape:
 {
@@ -46,21 +50,21 @@ Reply with JSON only, in this exact shape:
 }"""
 
 
-def transcript_path(name: str, index: int) -> str:
+def transcript_path(dataset: DatasetLike, index: int | str) -> str:
     """Return the path of transcript #index for a dataset name."""
-    return f"data/{name}_transcript_{index}.json"
+    return str(dataset_paths(dataset).transcript_path(index))
 
 
-def next_transcript_index(name: str) -> int:
+def next_transcript_index(dataset: DatasetLike) -> int:
     """Return the first unused transcript index for a dataset name."""
     i = 1
-    while os.path.exists(transcript_path(name, i)):
+    while os.path.exists(transcript_path(dataset, i)):
         i += 1
     return i
 
 
 def write_transcript(
-    name: str,
+    dataset: DatasetLike,
     participants: Dict[str, str],
     date: str,
     url: str,
@@ -74,8 +78,8 @@ def write_transcript(
         str: The path written.
     """
     if index is None:
-        index = next_transcript_index(name)
-    path = transcript_path(name, index)
+        index = next_transcript_index(dataset)
+    path = transcript_path(dataset, index)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(
@@ -236,7 +240,7 @@ def structure_raw_conversation(raw_text: str, target: str) -> Dict[str, Any]:
     return data
 
 
-def import_conversation_file(name: str, path: str, target: str) -> str:
+def import_conversation_file(dataset: DatasetLike, path: str, target: str) -> str:
     """
     Import one conversation file (structured or not) as a transcript.
 
@@ -247,18 +251,19 @@ def import_conversation_file(name: str, path: str, target: str) -> str:
     Returns:
         str: The transcript path written.
     """
-    with open(path) as f:
+    source_path = Path(path).expanduser().resolve()
+    with source_path.open() as f:
         raw = f.read()
 
-    data = parse_json_or_jsonl(raw) if path.endswith((".json", ".jsonl")) else None
+    data = parse_json_or_jsonl(raw) if source_path.suffix in (".json", ".jsonl") else None
     today = datetime.now(timezone.utc).date().isoformat()
 
     if is_transcript(data):
         return write_transcript(
-            name,
+            dataset,
             data["participants"],
             data.get("date") or today,
-            data.get("url") or path,
+            data.get("url") or str(source_path),
             data["exchanges"],
         )
 
@@ -276,25 +281,25 @@ def import_conversation_file(name: str, path: str, target: str) -> str:
         top = max(questioners, key=lambda k: questioners[k]) if questioners else ""
         meta = data if isinstance(data, dict) else {}
         return write_transcript(
-            name,
+            dataset,
             {"q": top or "Interviewer", "a": target},
             meta.get("date") or today,
-            meta.get("url") or path,
+            meta.get("url") or str(source_path),
             exchanges,
         )
 
     hx.step(f"{path}: unstructured, extracting exchanges with {STRUCTURER_MODEL}")
     structured = structure_raw_conversation(raw, target)
     return write_transcript(
-        name,
+        dataset,
         structured["participants"],
         structured.get("date") or today,
-        structured.get("url") or path,
+        structured.get("url") or str(source_path),
         structured["exchanges"],
     )
 
 
-def import_text_source_file(name: str, path: str) -> int:
+def import_text_source_file(dataset: DatasetLike, path: str) -> int:
     """
     Append a text source (structured grounding jsonl or raw text) to the
     grounding corpus data/{name}.jsonl.
@@ -305,11 +310,12 @@ def import_text_source_file(name: str, path: str) -> int:
     """
     from .sources import append_corpus_records
 
-    with open(path) as f:
+    source_path = Path(path).expanduser().resolve()
+    with source_path.open() as f:
         raw = f.read()
 
     records: List[Dict[str, Any]] = []
-    if path.endswith(".jsonl"):
+    if source_path.suffix == ".jsonl":
         try:
             parsed = [json.loads(line) for line in raw.splitlines() if line.strip()]
             if all(isinstance(p, dict) and "content" in p for p in parsed):
@@ -318,15 +324,15 @@ def import_text_source_file(name: str, path: str) -> int:
             records = []
 
     if not records:
-        mtime = datetime.fromtimestamp(os.path.getmtime(path), timezone.utc)
-        title = re.sub(r"[_-]+", " ", os.path.splitext(os.path.basename(path))[0])
+        mtime = datetime.fromtimestamp(source_path.stat().st_mtime, timezone.utc)
+        title = re.sub(r"[_-]+", " ", source_path.stem)
         records = [
             {
                 "title": title,
-                "link": path,
+                "link": str(source_path),
                 "date": mtime.date().isoformat(),
                 "content": raw,
             }
         ]
 
-    return append_corpus_records(name, records)
+    return append_corpus_records(dataset, records)

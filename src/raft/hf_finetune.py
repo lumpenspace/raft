@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from . import hx
 from .interactive import ask, bail, confirm
+from .project import DatasetLike, dataset_paths
 
 OPBDH_INSTALL_HINT = (
     "opbdh is not installed. Install it with:\n"
@@ -153,7 +154,7 @@ def coerce_flag_value(raw: str) -> Any:
     return raw
 
 
-def prepare_run_dir(name: str) -> str:
+def prepare_run_dir(dataset: DatasetLike) -> str:
     """
     Create data/{name}_hf_run/ with the training script, requirements
     and the dataset (messages stripped to role/content for chat
@@ -162,14 +163,15 @@ def prepare_run_dir(name: str) -> str:
     Returns:
         str: The run directory path.
     """
-    source = f"data/{name}_finetune_openai.jsonl"
-    if not os.path.exists(source):
-        bail(f"{source} not found -- run `raft ft:gen {name}` first")
+    paths = dataset_paths(dataset)
+    source = paths.finetune_openai_path
+    if not source.exists():
+        bail(f"{source} not found -- run `{paths.command('ft:gen')}` first")
 
-    run_dir = f"data/{name}_hf_run"
-    os.makedirs(run_dir, exist_ok=True)
+    run_dir = paths.hf_run_path
+    run_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(source) as src, open(f"{run_dir}/train.jsonl", "w") as out:
+    with source.open() as src, (run_dir / "train.jsonl").open("w") as out:
         for line in src:
             if not line.strip():
                 continue
@@ -181,11 +183,11 @@ def prepare_run_dir(name: str) -> str:
             ]
             out.write(json.dumps({"messages": messages}) + "\n")
 
-    with open(f"{run_dir}/run.py", "w") as f:
+    with (run_dir / "run.py").open("w") as f:
         f.write(RUN_SCRIPT)
-    with open(f"{run_dir}/requirements.txt", "w") as f:
+    with (run_dir / "requirements.txt").open("w") as f:
         f.write(RUN_REQUIREMENTS)
-    return run_dir
+    return str(run_dir)
 
 
 def pick_model_interactively(opbdh: Any) -> str:
@@ -205,7 +207,7 @@ def pick_model_interactively(opbdh: Any) -> str:
 
 
 def run_hf_finetune(
-    name: str,
+    dataset: DatasetLike,
     model: str,
     opbdh_args: Optional[List[str]] = None,
     interactive: bool = False,
@@ -230,7 +232,7 @@ def run_hf_finetune(
             bail("no model given -- pass --model <org/name> or drop --no-interactive")
         model = pick_model_interactively(opbdh)
 
-    run_dir = prepare_run_dir(name)
+    run_dir = prepare_run_dir(dataset)
     overrides = parse_opbdh_flags(list(opbdh_args or []))
 
     if interactive and "vram_gb" not in overrides:

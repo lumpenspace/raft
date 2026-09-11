@@ -8,13 +8,14 @@ documents (data/{name}.jsonl, ready for `raft chunk`) and reply branches
 become q/a transcripts (ready for `raft ft:gen`).
 """
 
-import os
 from typing import Any, Dict, List
 
 from .convo_structurer import messages_to_exchanges, write_transcript
 from . import hx
 from .interactive import ask, ask_path, bail, choose, confirm
+from .project import DatasetLike, DatasetPaths, dataset_paths
 from .sources import iso_date  # noqa: F401  (re-exported; used below)
+from . import state
 
 ARIADNE_INSTALL_HINT = (
     "ariadne is not installed. Install it with:\n"
@@ -87,7 +88,9 @@ def ask_build_options() -> Dict[str, Any]:
     return options
 
 
-def import_documents(name: str, documents: List[Dict[str, Any]], target: str) -> None:
+def import_documents(
+    dataset: DatasetLike, documents: List[Dict[str, Any]], target: str, role: str = "auto"
+) -> None:
     """
     Import ariadne raft documents as grounding corpus + transcripts.
 
@@ -98,8 +101,9 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
     """
     from .sources import append_corpus_records
 
-    os.makedirs("data", exist_ok=True)
-    corpus_path = f"data/{name}.jsonl"
+    if role not in ("auto", "conversation", "corpus"):
+        raise ValueError(f"unknown source role: {role}")
+    paths = dataset_paths(dataset)
     # Ariadne reports usernames without the leading @; match on the bare handle.
     handle = target.lstrip("@")
     seen_ids = set()
@@ -117,7 +121,12 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
 
         text = (doc.get("text") or "").strip()
         date = iso_date(meta.get("target_created_at"))
-        if text:
+        exchanges, _ = messages_to_exchanges(
+            normalize_messages(doc.get("messages") or [], handle), handle
+        )
+        destination = document_dataset_role(doc, exchanges) if role == "auto" else role
+
+        if destination == "corpus" and text:
             records.append(
                 {
                     "title": f"tweet thread {meta.get('target_id', doc_id)}",
@@ -127,20 +136,22 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
                 }
             )
 
-        exchanges, _ = messages_to_exchanges(
-            normalize_messages(doc.get("messages") or [], handle), handle
-        )
-        if exchanges and not first_date:
-            first_date = date
-        all_exchanges.extend(exchanges)
+        elif destination == "conversation":
+            if exchanges and not first_date:
+                first_date = date
+            all_exchanges.extend(exchanges)
+            if not exchanges:
+                hx.warn(
+                    f"conversation row {doc_id} had no usable target exchange; skipped"
+                )
 
-    n_docs = append_corpus_records(name, records)
+    n_docs = append_corpus_records(paths, records)
 
     n_transcripts = 0
     for start in range(0, len(all_exchanges), EXCHANGES_PER_TRANSCRIPT):
         batch = all_exchanges[start : start + EXCHANGES_PER_TRANSCRIPT]
         write_transcript(
-            name,
+            paths,
             {"q": "Twitter interlocutors", "a": target},
             first_date or "unknown",
             "https://x.com",
@@ -149,7 +160,7 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
         n_transcripts += 1
 
     hx.ok(
-        f"imported {n_docs} grounding documents into {corpus_path} and "
+        f"imported {n_docs} grounding documents into {paths.corpus_path} and "
         f"{len(all_exchanges)} exchanges into {n_transcripts} transcript file(s)"
     )
     if n_docs and not all_exchanges:
@@ -159,6 +170,23 @@ def import_documents(name: str, documents: List[Dict[str, Any]], target: str) ->
             f"  grounding material but no interview data. Try --replies-only\n"
             f"  sources, or add conversation examples with `raft interactive`."
         )
+
+
+def document_dataset_role(
+    document: Dict[str, Any], exchanges: List[List[str]]
+) -> str:
+    """Choose exactly one Raft destination for an Ariadne document.
+
+    New Ariadne rows explicitly carry ``metadata.dataset_role``. Older
+    ``raft.documents.v1`` rows do not, so exchanges remain the compatibility
+    signal: rows with a usable exchange are conversations; everything else is
+    grounding corpus.
+    """
+    metadata = document.get("metadata") or {}
+    explicit = metadata.get("dataset_role") or document.get("dataset_role")
+    if explicit in ("conversation", "corpus"):
+        return str(explicit)
+    return "conversation" if exchanges else "corpus"
 
 
 def normalize_messages(
@@ -201,9 +229,12 @@ def normalize_messages(
     return normalized
 
 
-def _gather_x(ariadne, name: str, default_handle: str) -> int:
+def _gather_x(ariadne, dataset: DatasetLike, default_handle: str, role: str = "auto") -> int:
     """Run the X/Twitter branch and import its documents. Returns doc count."""
     options = ask_build_options()
+    paths = dataset_paths(dataset)
+    if paths.project:
+        options["cache"] = str(paths.ariadne_cache_path)
     hx.step("reconstructing X threads with ariadne")
     result = ariadne.build(**options)
     for warning in result.warnings[:10]:
@@ -213,7 +244,10 @@ def _gather_x(ariadne, name: str, default_handle: str) -> int:
         hx.warn("no X conversations were reconstructed")
         return 0
     hx.ok(f"reconstructed {len(documents)} X thread(s)")
-    result.save_cache()
+    if paths.project:
+        result.save_cache(paths.ariadne_cache_path)
+    else:
+        result.save_cache()
     # ariadne >= 0.6 records what it could not fetch in its cache.
     unresolved = getattr(result, "unresolved_ids", lambda: [])()
     if unresolved:
@@ -222,11 +256,11 @@ def _gather_x(ariadne, name: str, default_handle: str) -> int:
             "recover them later with `ariadne cache retry`, then re-run tweet mode"
         )
     handle = options.get("target_user") or options.get("for_user") or default_handle
-    import_documents(name, documents, handle)
+    import_documents(paths, documents, handle, role=role)
     return len(documents)
 
 
-def _gather_bluesky(ariadne, name: str, default_handle: str) -> int:
+def _gather_bluesky(ariadne, dataset: DatasetLike, default_handle: str, role: str = "auto") -> int:
     """Run the Bluesky branch and import its documents. Returns doc count."""
     if not hasattr(ariadne, "build_bluesky"):
         hx.warn(
@@ -248,11 +282,13 @@ def _gather_bluesky(ariadne, name: str, default_handle: str) -> int:
         hx.warn("no Bluesky conversations were reconstructed")
         return 0
     hx.ok(f"reconstructed {len(documents)} Bluesky thread(s)")
-    import_documents(name, documents, handle.lstrip("@"))
+    import_documents(dataset, documents, handle.lstrip("@"), role=role)
     return len(documents)
 
 
-def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) -> None:
+def run_tweet_mode(
+    dataset: DatasetLike | str = "", target: str = "", standalone: bool = True, role: str = "auto"
+) -> None:
     """
     Run the interactive tweet-mode flow end to end.
 
@@ -274,16 +310,21 @@ def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) ->
     want_x = network in (0, 2)
     want_bsky = network in (1, 2)
 
+    paths: DatasetPaths | None = dataset_paths(dataset) if dataset else None
+    if paths and paths.project and not target:
+        target = state.load_meta(paths).get("target", "")
     if not target:
         target = ask("Target to emulate (handle or name)")
-    if not name:
-        name = ask("Dataset name", target.lstrip("@").lower())
+    if paths is None:
+        paths = dataset_paths(ask("Dataset name", target.lstrip("@").lower()))
+    if paths.project and state.load_meta(paths).get("target") != target:
+        state.update_meta(paths, target=target)
 
     total = 0
     if want_x:
-        total += _gather_x(ariadne, name, target)
+        total += _gather_x(ariadne, paths, target, role=role)
     if want_bsky:
-        total += _gather_bluesky(ariadne, name, target)
+        total += _gather_bluesky(ariadne, paths, target, role=role)
 
     if total == 0:
         bail("no conversations were reconstructed from the chosen source(s)")
@@ -292,12 +333,16 @@ def run_tweet_mode(name: str = "", target: str = "", standalone: bool = True) ->
         return
 
     hx.step("next steps")
-    hx.say(f"  raft chunk {name}   # chunk the grounding corpus")
-    hx.say(f"  raft embed {name}   # embed + store in chromadb")
-    hx.say(f"  raft ft:gen {name}  # generate the finetune dataset")
-    hx.say(f"  raft ft:run {name}  # run the finetune")
-    if confirm("Run chunk + embed now?", default=False):
+    has_corpus = bool(state.dataset_status(paths)["corpus_docs"])
+    if has_corpus:
+        hx.say(f"  {paths.command('chunk')}   # chunk the grounding corpus")
+        hx.say(f"  {paths.command('embed')}   # embed + store in chromadb")
+    else:
+        hx.say("Conversations only: no chunking or embedding needed.")
+    hx.say(f"  {paths.command('ft:gen')}  # generate the finetune dataset")
+    hx.say(f"  {paths.command('ft:run')}  # run the finetune")
+    if has_corpus and confirm("Run chunk + embed now?", default=False):
         from . import embeddings_helpers, files_helper
 
-        files_helper.chunker(name)
-        embeddings_helpers.store_grounding_embeddings(name)
+        files_helper.chunker(paths)
+        embeddings_helpers.store_grounding_embeddings(paths)

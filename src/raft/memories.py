@@ -1,6 +1,5 @@
 from typing import List, Dict, Union, Any
 from enum import Enum
-import os
 import time
 import re
 from datetime import datetime
@@ -13,13 +12,13 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
-    ChatCompletionFunctionMessageParam,
 )
 
 from . import hx
 from .prompt_manager import PromptManager
 from .embeddings_helpers import get_and_store_embedding, get_embedding
 from .sources import date_num
+from .project import DatasetLike, dataset_paths
 
 MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-4-turbo")
@@ -39,7 +38,7 @@ ExtractedDataType = List[Dict[str, Union[str, datetime, int, float, bool]]]
 class MemoryManager:
     """Manages the retrieval and summarization of memories."""
 
-    def __init__(self, name: str, metadata: Dict[MetaDataKeyEnum, Any]):
+    def __init__(self, dataset: DatasetLike, metadata: Dict[MetaDataKeyEnum, Any]):
         """
         Initialize the MemoryManager.
 
@@ -47,21 +46,22 @@ class MemoryManager:
             name (str): The name of the collection.
             metadata (Dict[MetaDataKeyEnum, Any]): Metadata for the collection.
         """
-        self.name = name
+        self.dataset = dataset_paths(dataset)
+        self.name = self.dataset.name
         # The existence check keeps a missing dataset missing: merely
         # constructing a PersistentClient would create the chroma dir.
         self.collection = None
-        if os.path.exists(f"data/{name}/chroma.sqlite3"):
+        if (self.dataset.chroma_path / "chroma.sqlite3").exists():
             try:
-                chroma_client = PersistentClient(path=f"data/{name}")
-                self.collection = chroma_client.get_collection(name)
+                chroma_client = PersistentClient(path=str(self.dataset.chroma_path))
+                self.collection = chroma_client.get_collection(self.dataset.collection)
             except Exception:
                 pass
         if self.collection is None:
             # Degrade to no memories rather than not running at all, but
             # never silently: ungrounded output looks just like grounded.
             hx.warn(
-                f"no grounding collection for {name} -- proceeding without "
+                f"no grounding collection for {self.name} -- proceeding without "
                 f"memories (chunk + embed the corpus to enable retrieval)"
             )
         self._dated: Union[bool, None] = None
@@ -150,7 +150,7 @@ class MemoryManager:
 
         if store:
             embedding = get_and_store_embedding(
-                {"question": exchange[0]}, self.name, string_metadata
+                {"question": exchange[0]}, self.dataset, string_metadata
             )
         else:
             embedding = get_embedding(exchange[0])
@@ -259,17 +259,14 @@ class MemoryManager:
 
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
-                role="system",
-                content=f"Given these previous blog posts and relevant \
-                    memories, how would you answer the user's question \
-                    in the style of {self.name}?",
+                role="system", content=f"Answer in the style of {self.name}.",
             ),
-            ChatCompletionSystemMessageParam(role="system", content=context),
-            ChatCompletionFunctionMessageParam(
-                role="function", name="retrieve_memories", content=memories
-            ),
-            ChatCompletionUserMessageParam(role="user", content=question),
         ]
+        if context:
+            messages.append(ChatCompletionSystemMessageParam(role="system", content=context))
+        if memories:
+            messages.append(ChatCompletionSystemMessageParam(role="system", content=f"Relevant memories: {memories}"))
+        messages.append(ChatCompletionUserMessageParam(role="user", content=question))
 
         response = self.openai_client.chat.completions.create(
             model=model, messages=messages
@@ -278,7 +275,9 @@ class MemoryManager:
         return response.choices[0].message.content or ""
 
 
-def preview_context(name: str, question: str, n_results: int = 5) -> List[Dict[str, str]]:
+def preview_context(
+    dataset: DatasetLike, question: str, n_results: int = 5
+) -> List[Dict[str, str]]:
     """
     What retrieval would put in the persona's context for a question --
     without storing the question or calling the summarizer.
@@ -289,10 +288,13 @@ def preview_context(name: str, question: str, n_results: int = 5) -> List[Dict[s
     """
     # Existence check first: constructing a PersistentClient would
     # create data/{name}/ and make an unembedded dataset look embedded.
-    if not os.path.exists(f"data/{name}/chroma.sqlite3"):
+    paths = dataset_paths(dataset)
+    if not (paths.chroma_path / "chroma.sqlite3").exists():
         return []
     try:
-        collection = PersistentClient(path=f"data/{name}").get_collection(name)
+        collection = PersistentClient(path=str(paths.chroma_path)).get_collection(
+            paths.collection
+        )
     except Exception:
         return []
 

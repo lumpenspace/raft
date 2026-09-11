@@ -21,6 +21,28 @@ ok then, a friend asked so now it is more lenient with the version number and us
 
 (2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
 
+## 2.5
+
+Start a persona project with `raft init my-persona`, then `cd my-persona`
+and `raft interactive`. Commands inside the project no longer need a dataset
+name. Existing `raft <action> <name>` datasets still work.
+
+At the beginning, select all the sources you have: tweets (X / Bluesky),
+Substack, blogs / RSS, web pages, PDFs, local files, or chat logs. You can
+select multiple sources, including several of the same kind. For each, choose
+**conversations** or **grounding documents** before importing. Tweets also
+support an automatic split: replies become conversations and other posts become
+grounding. Conversation sources must contain actual exchanges; an essay is not
+turned into invented dialogue. Extracting unstructured conversations uses the
+configured LLM.
+
+Grounding is optional. With conversations alone, prep skips chunking and
+embedding and creates training examples without retrieved memories.
+
+Projects store `raft.json` alongside `fetch/`, `blobs/`, `metadata/`,
+`conversations/`, and `corpus/`. Model state and source choices live in
+`metadata/state.json`.
+
 ## 2.3
 
 `raft interactive` grew into a five-phase session, resumable per dataset —

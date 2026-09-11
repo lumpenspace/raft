@@ -21,6 +21,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from . import hx
+from .project import DatasetLike, dataset_paths
 
 USER_AGENT = "raft-ft (+https://github.com/lumpenspace/raft)"
 
@@ -76,19 +77,19 @@ def html_to_text(html: str) -> str:
     return BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
 
 
-def append_corpus_records(name: str, records: List[Dict[str, Any]]) -> int:
+def append_corpus_records(dataset: DatasetLike, records: List[Dict[str, Any]]) -> int:
     """
     Append records to data/{name}.jsonl, skipping links already there.
 
     Returns:
         int: Number of records actually appended.
     """
-    corpus_path = f"data/{name}.jsonl"
-    os.makedirs("data", exist_ok=True)
+    corpus_path = dataset_paths(dataset).corpus_path
+    corpus_path.parent.mkdir(parents=True, exist_ok=True)
 
     seen_links = set()
-    if os.path.exists(corpus_path):
-        with open(corpus_path) as f:
+    if corpus_path.exists():
+        with corpus_path.open() as f:
             for line in f:
                 if line.strip():
                     link = json.loads(line).get("link")
@@ -96,7 +97,7 @@ def append_corpus_records(name: str, records: List[Dict[str, Any]]) -> int:
                         seen_links.add(link)
 
     added = 0
-    with open(corpus_path, "a") as f:
+    with corpus_path.open("a") as f:
         for record in records:
             link = record.get("link", "")
             if link and link in seen_links:
@@ -148,10 +149,10 @@ def extract_page(html: str, url: str) -> Dict[str, str]:
     }
 
 
-def fetch_url(name: str, url: str) -> int:
+def fetch_url(dataset: DatasetLike, url: str) -> int:
     """Fetch one web page and append it to the corpus. Returns docs added."""
     record = extract_page(_http_get(url), url)
-    return append_corpus_records(name, [record])
+    return append_corpus_records(dataset, [record])
 
 
 def _element_html(el: Optional[ET.Element]) -> str:
@@ -231,7 +232,7 @@ def resolve_feed(url: str) -> List[Dict[str, str]]:
     raise ValueError(f"{url} is neither a feed nor a page that links to one")
 
 
-def fetch_feed(name: str, url: str, fetch_pages: bool = True) -> int:
+def fetch_feed(dataset: DatasetLike, url: str, fetch_pages: bool = True) -> int:
     """
     Import an RSS/Atom feed into the corpus.
 
@@ -263,10 +264,10 @@ def fetch_feed(name: str, url: str, fetch_pages: bool = True) -> int:
                 "content": text,
             }
         )
-    return append_corpus_records(name, records)
+    return append_corpus_records(dataset, records)
 
 
-def import_pdf(name: str, path: str) -> int:
+def import_pdf(dataset: DatasetLike, path: str) -> int:
     """
     Extract a PDF's text and append it to the corpus as one document.
 
@@ -289,6 +290,6 @@ def import_pdf(name: str, path: str) -> int:
     # The file mtime says when the PDF was downloaded, not written, so
     # the date stays unknown (always retrievable) rather than wrong.
     return append_corpus_records(
-        name,
+        dataset,
         [{"title": title, "link": path, "date": "", "content": text}],
     )

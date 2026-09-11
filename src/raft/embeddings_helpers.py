@@ -8,6 +8,7 @@ from chromadb import PersistentClient
 from openai import OpenAI
 
 from .sources import date_num
+from .project import DatasetLike, dataset_paths
 
 _client = None
 
@@ -37,7 +38,7 @@ def get_embedding(text: str) -> List[float]:
 
 
 def get_and_store_embedding(
-    exchange: Dict[str, Any], name: str, metadata: Dict[str, Any]
+    exchange: Dict[str, Any], dataset: DatasetLike, metadata: Dict[str, Any]
 ) -> List[float]:
     """
     Get and store the embedding for a given exchange.
@@ -56,8 +57,10 @@ def get_and_store_embedding(
     url = metadata.get("url", "")
     id = "".join(c for c in f"{url}{qs[:20]}" if c.isalnum()).lower()
 
-    chroma_client = PersistentClient(path=f"data/{name}")
-    collection = chroma_client.get_or_create_collection(name)
+    paths = dataset_paths(dataset)
+    paths.chroma_path.mkdir(parents=True, exist_ok=True)
+    chroma_client = PersistentClient(path=str(paths.chroma_path))
+    collection = chroma_client.get_or_create_collection(paths.collection)
 
     stored_embedding = collection.get(ids=id).get("embeddings")
 
@@ -86,19 +89,21 @@ def get_and_store_embedding(
     return embedding
 
 
-def store_grounding_embeddings(name: str) -> None:
+def store_grounding_embeddings(dataset: DatasetLike) -> None:
     """
     Store grounding embeddings for a given name.
 
     Args:
         name (str): The name of the collection and file to process.
     """
-    chroma_client = PersistentClient(path=f"data/{name}")
-    collection = chroma_client.get_or_create_collection(name)
+    paths = dataset_paths(dataset)
+    paths.chroma_path.mkdir(parents=True, exist_ok=True)
+    chroma_client = PersistentClient(path=str(paths.chroma_path))
+    collection = chroma_client.get_or_create_collection(paths.collection)
 
-    sourcefile = f"data/{name}_chunked.jsonl"
+    sourcefile = paths.chunks_path
 
-    with open(sourcefile, "r") as f:
+    with sourcefile.open("r") as f:
         for line in f:
             metadata, document = json.loads(line)
             print(f"Storing {metadata['title']}")

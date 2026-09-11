@@ -285,7 +285,7 @@ class TestTweetMode(TempCwdTestCase):
         import_documents("merged", [bsky_doc], "gary.bsky")
 
         corpus = self.read_jsonl("data/merged.jsonl")
-        self.assertEqual(sorted(c["date"] for c in corpus), ["2024-03-01", "2024-04-01"])
+        self.assertEqual(corpus, [])
         t1 = self.read_json("data/merged_transcript_1.json")
         t2 = self.read_json("data/merged_transcript_2.json")
         self.assertEqual(t1["exchanges"], [["q?", "a"]])
@@ -306,7 +306,7 @@ class TestTweetMode(TempCwdTestCase):
         documents = self.documents(1)
         documents[0]["metadata"]["target_created_at"] = "Mon Jan 01 12:05:00 +0000 2024"
         import_documents("tw", documents, "gary")
-        self.assertEqual(self.read_jsonl("data/tw.jsonl")[0]["date"], "2024-01-01")
+        self.assertEqual(self.read_json("data/tw_transcript_1.json")["date"], "2024-01-01")
 
     def test_self_thread_keeps_grounding_but_writes_no_transcript(self):
         documents = self.documents(1)
@@ -316,12 +316,10 @@ class TestTweetMode(TempCwdTestCase):
         self.assertEqual(len(self.read_jsonl("data/tw.jsonl")), 1)
         self.assertFalse(os.path.exists("data/tw_transcript_1.json"))
 
-    def test_import_builds_corpus_and_transcripts(self):
+    def test_conversations_are_not_duplicated_into_grounding(self):
         import_documents("tw", self.documents(3), "gary")
         corpus = self.read_jsonl("data/tw.jsonl")
-        self.assertEqual(len(corpus), 3)
-        self.assertEqual(corpus[0]["content"], "@rando: hot take 0?\n\n@gary: reply 0")
-        self.assertEqual(corpus[0]["date"], "2024-03-01")
+        self.assertEqual(corpus, [])
         transcript = self.read_json("data/tw_transcript_1.json")
         self.assertEqual(len(transcript["exchanges"]), 3)
         self.assertEqual(transcript["participants"]["a"], "gary")
@@ -330,7 +328,8 @@ class TestTweetMode(TempCwdTestCase):
         docs = self.documents(2)
         import_documents("tw", docs + docs, "gary")
         corpus = self.read_jsonl("data/tw.jsonl")
-        self.assertEqual(len(corpus), 2)
+        self.assertEqual(corpus, [])
+        self.assertEqual(len(self.read_json("data/tw_transcript_1.json")["exchanges"]), 2)
 
 
 class TestOpbdhFlagParsing(TempCwdTestCase):
