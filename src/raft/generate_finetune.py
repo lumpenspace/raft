@@ -3,9 +3,12 @@ import time
 from typing import Any
 from .memories import MemoryManager, MetaDataKeyEnum
 from .files_helper import begin_json_file, end_json_file, write_context_to_file
+from .project import DatasetLike, dataset_paths
 
 
-def process_transcripts(name: str, suffix: str, is_benchmark: bool) -> None:
+def process_transcripts(
+    dataset: DatasetLike, suffix: str, is_benchmark: bool
+) -> None:
     """
     Process transcripts and generate fine-tuning data.
 
@@ -17,18 +20,24 @@ def process_transcripts(name: str, suffix: str, is_benchmark: bool) -> None:
         no_useful_check (bool, optional): Whether to skip the usefulness check.
         Defaults to False.
     """
-    with open(f"data/{name}_transcript_{suffix}.json") as f:
+    paths = dataset_paths(dataset)
+    with paths.transcript_path(suffix).open() as f:
         interview_data = json.load(f)
 
-    target_file = f"{name}_{'benchmark' if is_benchmark else 'finetune'}.json"
-    index = suffix if isinstance(suffix, int) else 1
+    target_file = paths.benchmark_generated_path if is_benchmark else paths.finetune_path
+    index = int(suffix) if str(suffix).isdigit() else 1
     metadata: dict[MetaDataKeyEnum, Any] = {
-        MetaDataKeyEnum[key]: interview_data[key]
+        MetaDataKeyEnum(key): interview_data[key]
         for key in ["participants", "date", "url"]
     }
-    memory_manager = MemoryManager(name, metadata)
+    memory_manager = MemoryManager(paths, metadata)
 
-    write_context_to_file(target_file, {"metadata": metadata}, index, 0)
+    write_context_to_file(
+        target_file,
+        {"metadata": {key.value: value for key, value in metadata.items()}},
+        index,
+        0,
+    )
     prev_answer = ""
 
     for j, exchange in enumerate(interview_data["exchanges"]):
@@ -47,37 +56,39 @@ def process_transcripts(name: str, suffix: str, is_benchmark: bool) -> None:
         prev_answer = answer
 
 
-def generate_finetune(name: str) -> None:
+def generate_finetune(dataset: DatasetLike) -> None:
     """
     Generate fine-tuning data for a given dataset.
 
     Args:
         name (str): The name of the dataset.
     """
-    begin_json_file(f"{name}_finetune")
+    paths = dataset_paths(dataset)
+    begin_json_file(paths.finetune_path)
     i = 1
     while True:
         try:
             print(f"processing transcript #{i}")
-            process_transcripts(name, f"{i}", False)
+            process_transcripts(paths, f"{i}", False)
         except FileNotFoundError:
             print(f"file #{i} not found")
             break
         time.sleep(2)
         i += 1
 
-    end_json_file(name)
-    print(f"Generic finetune file generated in: data/{name}_finetune.json")
+    end_json_file(paths.finetune_path)
+    print(f"Generic finetune file generated in: {paths.finetune_path}")
 
 
-def generate_benchmark(name: str) -> None:
+def generate_benchmark(dataset: DatasetLike) -> None:
     """
     Generate benchmark data for a given dataset.
 
     Args:
         name (str): The name of the dataset.
     """
-    begin_json_file(f"{name}_benchmark")
-    process_transcripts(name, "benchmark", True)
-    end_json_file(f"{name}_benchmark")
+    paths = dataset_paths(dataset)
+    begin_json_file(paths.benchmark_generated_path)
+    process_transcripts(paths, "benchmark", True)
+    end_json_file(paths.benchmark_generated_path)
     print("Done!")

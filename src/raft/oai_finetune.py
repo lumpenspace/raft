@@ -4,6 +4,7 @@ import json
 import tiktoken
 from typing import List, Dict, Any, Tuple, Union
 from .prompt_manager import PromptManager
+from .project import DatasetLike, dataset_paths
 from openai.types.chat import ChatCompletionSystemMessageParam as SystemMessageParam
 
 prompt_manager = PromptManager()
@@ -94,18 +95,19 @@ def create_finetune_job(name: str, file: Any, model: str) -> Any:
     return job
 
 
-def launch_oai_finetune(name: str, model: str) -> str:
+def launch_oai_finetune(dataset: DatasetLike, model: str) -> str:
     """
     Upload the dataset and create the fine-tuning job (without waiting).
 
     Returns:
         str: The job id, for wait_oai_finetune.
     """
-    filename = f"data/{name}_finetune_openai.jsonl"
+    paths = dataset_paths(dataset)
+    filename = paths.finetune_openai_path
     print(f"uploading file: {filename}")
     with open(file=filename, mode="rb") as source_file:
         file = _get_client().files.create(file=source_file, purpose="fine-tune")
-    return create_finetune_job(name, file, model).id
+    return create_finetune_job(paths.name, file, model).id
 
 
 def wait_oai_finetune(job_id: str) -> str:
@@ -127,7 +129,9 @@ def wait_oai_finetune(job_id: str) -> str:
         time.sleep(2)
 
 
-def run_oai_finetune(name: str, model: str = "gpt-4o-mini-2024-07-18") -> str:
+def run_oai_finetune(
+    dataset: DatasetLike, model: str = "gpt-4o-mini-2024-07-18"
+) -> str:
     """
     Run OpenAI fine-tuning for a given name, start to finish.
 
@@ -138,11 +142,11 @@ def run_oai_finetune(name: str, model: str = "gpt-4o-mini-2024-07-18") -> str:
     Returns:
         str: The finetuned model id, or "" if the job failed.
     """
-    return wait_oai_finetune(launch_oai_finetune(name, model))
+    return wait_oai_finetune(launch_oai_finetune(dataset, model))
 
 
 def create_openai_finetune_file(
-    name: str, type: str = "finetune"
+    dataset: DatasetLike, type: str = "finetune"
 ) -> List[List[Union[Dict[str, Any], SystemMessageParam]]]:
     """
     Create an OpenAI fine-tuning file.
@@ -155,7 +159,14 @@ def create_openai_finetune_file(
         List[List[Union[Dict[str, Any], SystemMessageParam]]]:
             The fine-tuning data.
     """
-    with open(f"data/{name}_{type}.json") as f:
+    paths = dataset_paths(dataset)
+    input_path = (
+        paths.finetune_path if type == "finetune" else paths.benchmark_generated_path
+    )
+    output_path = (
+        paths.finetune_openai_path if type == "finetune" else paths.benchmark_openai_path
+    )
+    with input_path.open() as f:
         data = json.load(f)
 
     # Group the examples and reverse the order within each group
@@ -203,7 +214,8 @@ def create_openai_finetune_file(
         finetune_data = group_data + finetune_data
 
     # Save the fine-tuned data to a new JSONL file
-    with open(f"data/{name}_{type}_openai.jsonl", "w") as f:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as f:
         finetune_data.reverse()
         for item in finetune_data:
             f.write(json.dumps({"messages": item}))

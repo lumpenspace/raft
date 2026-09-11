@@ -154,8 +154,106 @@ def confirm(prompt: str, default: bool = True) -> bool:
             return False
 
 
+def _menu_step(key: str, index: int, count: int) -> tuple:
+    """One keypress in a menu: (new highlight index, confirmed?).
+
+    ↑/k and ↓/j move (wrapping), a digit jumps to that option, and
+    Enter confirms — so the old "type 2, Enter" habit still works.
+    """
+    if key in ("\r", "\n"):
+        return index, True
+    if key in ("up", "k"):
+        return (index - 1) % count, False
+    if key in ("down", "j"):
+        return (index + 1) % count, False
+    if key.isdigit() and 1 <= int(key) <= count:
+        return int(key) - 1, False
+    return index, False
+
+
+def _read_menu_key(fd: int) -> str:
+    """One keypress, decoding arrow escape sequences to "up"/"down"."""
+    import select
+
+    data = os.read(fd, 1)
+    if data != b"\x1b":
+        return data.decode("utf-8", "ignore")
+    seq = b""
+    while len(seq) < 2 and select.select([fd], [], [], 0.05)[0]:
+        seq += os.read(fd, 1)
+    if seq == b"[A":
+        return "up"
+    if seq == b"[B":
+        return "down"
+    return ""
+
+
+def _choose_with_keys(prompt: str, options: List[str], default: Optional[int]) -> Optional[int]:
+    """In-place ↑/↓ (or j/k) menu; None when key input is unavailable.
+
+    Repaints the highlighted line with cursor movements rather than
+    taking over the screen, and collapses to a one-line record of the
+    choice — so transcripts stay readable and piped runs (no tty) fall
+    back to the numbered prompt.
+    """
+    c = console()
+    if c is None or not sys.stdin.isatty():
+        return None
+    try:
+        import termios
+        import tty
+    except ImportError:  # not a POSIX terminal (e.g. Windows)
+        return None
+
+    def draw(index: int) -> None:
+        for i, option in enumerate(options):
+            sys.stderr.write("\x1b[2K")
+            if i == index:
+                c.print(f"[bold {ACCENT}]❯ {i + 1}) {esc(option)}[/]", no_wrap=True)
+            else:
+                c.print(f"  [dim]{i + 1})[/] {esc(option)}", no_wrap=True)
+        sys.stderr.write("\x1b[2K")
+        c.print("[dim]↑/↓ · j/k · number · enter[/]", no_wrap=True)
+
+    index = default if default is not None else 0
+    c.print(f"\n{esc(prompt)}")
+    draw(index)
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        # cbreak keeps ISIG, so Ctrl-C still interrupts. TCSANOW: the
+        # default TCSAFLUSH would wait for our own menu output to drain,
+        # which deadlocks when nothing is reading the terminal (ptys in
+        # tests) -- and only input flags change, so there is nothing to
+        # protect by draining.
+        tty.setcbreak(fd, termios.TCSANOW)
+        while True:
+            index, done = _menu_step(_read_menu_key(fd), index, len(options))
+            if done:
+                break
+            sys.stderr.write(f"\x1b[{len(options) + 1}F")
+            draw(index)
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, saved)
+    sys.stderr.write(f"\x1b[{len(options) + 2}F\x1b[0J")
+    c.print(f"[bold {ACCENT}]»[/] {esc(prompt)} [dim]· {esc(options[index])}[/]")
+    return index
+
+
 def choose(prompt: str, options: List[str], default: Optional[int] = None) -> int:
-    """Pick one option by number (or by typing it); returns the 0-based index."""
+    """Pick one option: ↑/↓ or j/k and Enter on a tty, numbered input otherwise.
+
+    Returns the 0-based index.
+    """
+    try:
+        picked = _choose_with_keys(prompt, options, default)
+    except (KeyboardInterrupt, EOFError):
+        raise
+    except Exception:
+        picked = None  # odd terminal: fall back to the numbered prompt
+    if picked is not None:
+        return picked
+
     c = console()
     if c is None:
         print(f"\n{prompt}", file=sys.stderr)

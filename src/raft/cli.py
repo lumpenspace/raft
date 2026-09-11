@@ -23,6 +23,7 @@ def action_doc() -> str:
     return """
 The following actions are available:
 
+- init: Initialize a persona project in the current or specified directory.
 - interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - tweets: Build a dataset from tweets via ariadne interactive.
 - fetch: Fetch the blog from Substack and store it in the data directory.
@@ -42,6 +43,7 @@ opbdh; unknown flags after the name are forwarded verbatim to
 
 
 cmds = [
+    "init",
     "interactive",
     "tweets",
     "fetch",
@@ -116,32 +118,45 @@ def main() -> None:
     if args.action not in ("ft:run",) and extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
 
-    needs_name = args.action not in ("interactive", "tweets")
-    if needs_name and not args.name:
-        parser.error(f"the '{args.action}' action requires a dataset name")
+    from .project import ProjectError, dataset_paths, find_project, initialize_project
+
+    try:
+        if args.action == "init":
+            project, created = initialize_project(args.name or ".")
+            print(f"{'Created' if created else 'Opened'} Raft project: {project.root}")
+            return
+        dataset = dataset_paths(args.name) if args.name else find_project()
+    except ProjectError as exc:
+        parser.error(str(exc))
+    if dataset is None and args.action not in ("interactive", "tweets"):
+        parser.error(f"the '{args.action}' action requires a dataset name or a Raft project (raft init)")
 
     if args.action == "interactive":
         from .flows import run_interactive
 
-        run_interactive()
+        run_interactive(dataset)
     elif args.action == "tweets":
         from .tweet_mode import run_tweet_mode
 
-        run_tweet_mode(args.name)
+        run_tweet_mode(dataset or "")
     elif args.action == "fetch":
-        substack_embeddings.main(args.name)
+        if dataset.project:
+            from .flows import add_substack
+            add_substack(dataset)
+        else:
+            substack_embeddings.main(dataset.name)
     elif args.action == "chunk":
-        files_helper.chunker(args.name)
+        files_helper.chunker(dataset)
     elif args.action == "embed":
-        embeddings_helpers.store_grounding_embeddings(args.name)
+        embeddings_helpers.store_grounding_embeddings(dataset)
     elif args.action == "ft:gen":
         if args.oai:
-            oai_finetune.create_openai_finetune_file(args.name)
+            oai_finetune.create_openai_finetune_file(dataset)
         elif args.generic:
-            generate_finetune.generate_finetune(args.name)
+            generate_finetune.generate_finetune(dataset)
         else:
-            generate_finetune.generate_finetune(args.name)
-            oai_finetune.create_openai_finetune_file(args.name)
+            generate_finetune.generate_finetune(dataset)
+            oai_finetune.create_openai_finetune_file(dataset)
     elif args.action == "ft:run":
         from .hf_finetune import is_openai_finetunable, run_hf_finetune
         from .interactive import ask
@@ -160,35 +175,35 @@ def main() -> None:
                     "opbdh flags only apply to huggingface models: "
                     f"{' '.join(extra)}"
                 )
-            model_id = oai_finetune.run_oai_finetune(args.name, model=model)
+            model_id = oai_finetune.run_oai_finetune(dataset, model=model)
             if model_id:
-                record_finetuned_model(args.name, model_id, "openai")
+                record_finetuned_model(dataset, model_id, "openai")
         else:
             adapter = run_hf_finetune(
-                args.name,
+                dataset,
                 model,
                 opbdh_args=extra,
                 interactive=not args.no_interactive,
             )
-            record_finetuned_model(args.name, adapter, "hf")
+            record_finetuned_model(dataset, adapter, "hf")
     elif args.action == "bench:setup":
         if args.oai:
-            oai_finetune.create_openai_finetune_file(args.name, "benchmark")
+            oai_finetune.create_openai_finetune_file(dataset, "benchmark")
         elif args.generic:
-            generate_finetune.generate_finetune(args.name)
+            generate_finetune.generate_benchmark(dataset)
         else:
-            generate_finetune.generate_benchmark(args.name)
-            oai_finetune.create_openai_finetune_file(args.name, "benchmark")
+            generate_finetune.generate_benchmark(dataset)
+            oai_finetune.create_openai_finetune_file(dataset, "benchmark")
     elif args.action == "serve":
         from .serve import run_serve
 
-        run_serve(args.name, model=args.model)
+        run_serve(dataset, model=args.model)
     elif args.action == "ask":
         if args.question is None:
             print("Please provide a question using the --question argument.")
         else:
             memory_manager = memories.MemoryManager(
-                args.name, {}
+                dataset, {}
             )  # Empty metadata for now
             answer = memory_manager.ask_question(args.question)
             print(f"Answer: {answer}")

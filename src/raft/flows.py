@@ -19,6 +19,8 @@ The session is resumable: it reads what already exists for the dataset
 """
 
 import glob
+import json
+import tempfile
 import os
 import re
 import sys
@@ -39,6 +41,7 @@ from .hf_finetune import (
 )
 from .interactive import ask, choose, confirm
 from .memories import MemoryManager
+from .project import DatasetLike, DatasetPaths, dataset_paths
 
 PHASES = [
     ("gather", "collect documents and conversations"),
@@ -171,58 +174,82 @@ def add_substack(name: str) -> None:
     hx.ok(f"{added} new document(s) from {blog}.substack.com")
 
 
-def phase_gather(name: str, target: str) -> None:
-    """Phase 1: collect documents and conversations, source by source."""
-    while True:
-        status = state.dataset_status(name)
-        hx.say(
-            f"so far: {status['corpus_docs']} document(s), "
-            f"{status['transcripts']} transcript file(s)"
-        )
-        kind = choose(
-            "Add a source?",
-            [
-                "substack blog (full archive)",
-                "RSS/Atom feed (any blog; a site URL works too)",
-                "a single URL",
-                "PDF file(s)",
-                "local text/jsonl files",
-                "tweets via ariadne (X / Bluesky)",
-                "conversation files (transcripts, chat logs, dumps)",
-                "done",
-            ],
-            default=7,
-        )
-        try:
-            if kind == 0:
-                add_substack(name)
-            elif kind == 1:
-                url = ask("Feed (or site) URL")
-                full = confirm("Fetch full pages for teaser entries?", default=True)
-                added = sources.fetch_feed(name, url, fetch_pages=full)
-                hx.ok(f"{added} new document(s)")
-            elif kind == 2:
-                url = ask("Page URL")
-                added = sources.fetch_url(name, url)
-                hx.ok(f"{added} new document(s)")
-            elif kind == 3:
-                for path in collect_paths("PDF files"):
-                    added = sources.import_pdf(name, path)
-                    hx.ok(f"{path}: {added} document(s) added")
-            elif kind == 4:
-                for path in collect_paths("Text source files"):
-                    n = import_text_source_file(name, path)
-                    hx.ok(f"{path}: {n} document(s) added")
-            elif kind == 5:
-                from .tweet_mode import run_tweet_mode
+SOURCE_KINDS = [
+    "tweets (X / Bluesky)", "Substack", "blog / RSS / Atom feed",
+    "web page / interview URL", "PDF files", "local text / JSONL files",
+    "conversation files / chat logs",
+]
 
-                run_tweet_mode(name, target, standalone=False)
-            elif kind == 6:
-                gather_conversations(name, target)
-            else:
-                return
-        except (requests.RequestException, ET.ParseError, ValueError, RuntimeError) as e:
-            hx.warn(f"source skipped: {e}")
+
+def plan_sources() -> list[dict]:
+    """Collect all source choices and their roles before fetching anything."""
+    plan = []
+    hx.say("What sources do you have? Add as many as you like, then start importing.")
+    hx.say("Conversations teach replies; grounding documents supply retrieval context. Grounding is optional.")
+    while True:
+        kind = choose("Available sources", SOURCE_KINDS + ["start importing"], default=len(SOURCE_KINDS) if plan else 0)
+        if kind == len(SOURCE_KINDS):
+            return plan
+        roles = ["conversations", "grounding documents"]
+        if kind == 0:
+            roles.append("both, split replies into conversations and other posts into grounding")
+        role = choose(f"Use {SOURCE_KINDS[kind]} for", roles, default=0 if kind in (0, 6) else 1)
+        plan.append({"kind": kind, "role": ["conversation", "corpus", "auto"][role]})
+        hx.say(f"Added {SOURCE_KINDS[kind]}: {roles[role]}")
+
+
+def import_planned_source(name: DatasetLike, target: str, item: dict) -> None:
+    """Route a source only to its selected destination."""
+    kind, role = item["kind"], item["role"]
+    if kind == 0:
+        from .tweet_mode import run_tweet_mode
+        run_tweet_mode(name, target, standalone=False, role=role)
+        return
+    if kind in (5, 6) and role == "conversation":
+        gather_conversations(name, target)
+        return
+    # Stage fetched documents when extracting conversations, so interview text
+    # never leaks into the destination grounding corpus.
+    with tempfile.TemporaryDirectory(prefix="raft-source-") as directory:
+        destination = DatasetPaths.legacy("source", directory) if role == "conversation" else name
+        if kind == 1:
+            add_substack(destination)
+        elif kind == 2:
+            sources.fetch_feed(destination, ask("Feed (or site) URL"),
+                               fetch_pages=confirm("Fetch full pages for teaser entries?", default=True))
+        elif kind == 3:
+            sources.fetch_url(destination, ask("Page URL"))
+        elif kind == 4:
+            for path in collect_paths("PDF files"):
+                sources.import_pdf(destination, path)
+        else:
+            for path in collect_paths("Text source files"):
+                import_text_source_file(destination, path)
+        if role == "conversation":
+            from .convo_structurer import structure_raw_conversation, write_transcript
+            corpus = dataset_paths(destination).corpus_path
+            records = [json.loads(line) for line in corpus.read_text().splitlines() if line.strip()] if corpus.exists() else []
+            for record in records:
+                try:
+                    transcript = structure_raw_conversation(record["content"], target)
+                    write_transcript(name, transcript["participants"], record.get("date") or "unknown",
+                                     record.get("link") or "", transcript["exchanges"])
+                except ValueError as exc:
+                    hx.warn(f"{record.get('title', 'document')}: {exc}")
+
+
+def phase_gather(name: DatasetLike, target: str) -> None:
+    """Plan multiple sources and their destinations, then import them."""
+    plan = plan_sources()
+    state.update_meta(name, source_plan=plan)
+    for item in plan:
+        hx.step(f"{SOURCE_KINDS[item['kind']]} -> {item['role']}")
+        try:
+            import_planned_source(name, target, item)
+        except (requests.RequestException, ET.ParseError, ValueError, RuntimeError, OSError) as exc:
+            hx.warn(f"source skipped: {exc}")
+    status = state.dataset_status(name)
+    hx.say(f"{status['corpus_docs']} grounding document(s), {status['transcripts']} transcript file(s)")
 
 
 def phase_prep(name: str) -> None:
@@ -237,14 +264,13 @@ def phase_prep(name: str) -> None:
             files_helper.chunker(name)
             embeddings_helpers.store_grounding_embeddings(name)
     else:
-        hx.warn("no grounding corpus -- the finetune examples will carry no memories")
+        hx.say("Conversations only: skipping chunking and embedding; training examples will have no retrieved memories.")
 
     if not status["transcripts"]:
         hx.warn("no conversation examples yet -- add some in the gather phase")
         return
     if confirm(
-        "Generate the finetune examples now? (each answer is augmented with\n"
-        "summaries of the target's relevant earlier writings)"
+        "Generate the finetune examples now?"
     ):
         generate_finetune.generate_finetune(name)
         oai_finetune.create_openai_finetune_file(name)
@@ -366,7 +392,7 @@ def phase_eval(name: str) -> None:
     status = state.dataset_status(name)
     if status["benchmark"] and confirm(
         "Generate the benchmark files from the benchmark transcript?",
-        default=not os.path.exists(f"data/{name}_benchmark_openai.jsonl"),
+        default=not dataset_paths(name).benchmark_openai_path.exists(),
     ):
         generate_finetune.generate_benchmark(name)
         oai_finetune.create_openai_finetune_file(name, "benchmark")
@@ -399,10 +425,18 @@ def phase_eval(name: str) -> None:
         )
 
 
-def run_interactive() -> None:
+def run_interactive(dataset: DatasetLike | None = None) -> None:
     """Run the guided five-phase raft session."""
     hx.banner("build a persona dataset and finetune it")
-    name, target = pick_dataset()
+    if dataset is None:
+        name, target = pick_dataset()
+    else:
+        name = dataset
+        target = state.load_meta(name).get("target") or ask("Who is the target (the person to emulate)?")
+        state.update_meta(name, target=target)
+    initial = state.dataset_status(name)
+    if not initial["corpus_docs"] and not initial["transcripts"]:
+        phase_gather(name, target)
 
     while True:
         status = state.dataset_status(name)
@@ -426,4 +460,4 @@ def run_interactive() -> None:
         else:
             break
 
-    hx.ok(f"all set. Come back with: raft interactive, or raft serve {name}")
+    hx.ok(f"all set. Come back with: raft interactive, or {dataset_paths(name).command('serve')}")
