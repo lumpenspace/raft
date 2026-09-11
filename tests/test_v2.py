@@ -376,12 +376,12 @@ class TestHuggingfaceRun(TempCwdTestCase):
                 )
                 + "\n"
             )
-        run_dir = prepare_run_dir("d")
-        for filename in ("run.py", "requirements.txt", "train.jsonl"):
+        run_dir = prepare_run_dir("d", "Qwen/Qwen2.5-7B-Instruct")
+        for filename in ("run.py", "requirements.txt", "dataset.jsonl", "config.json"):
             self.assertTrue(os.path.exists(f"{run_dir}/{filename}"), filename)
         ast.parse(self.read_text(f"{run_dir}/run.py"))
-        row = self.read_jsonl(f"{run_dir}/train.jsonl")[0]
-        for message in row["messages"]:
+        row = self.read_jsonl(f"{run_dir}/dataset.jsonl")[0]
+        for message in row["prompt"]:
             self.assertEqual(set(message), {"role", "content"})
 
 
