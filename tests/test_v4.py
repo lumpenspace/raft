@@ -252,3 +252,80 @@ def test_text_about_special_tokens_chunks_and_counts(project):
     [(meta, chunk)] = [json.loads(line) for line in project.chunks_path.read_text().splitlines()]
     assert "<|endoftext|>" in chunk and meta["title"] == "t"
     assert oai_finetune.count_tokens({"content": "<|endoftext|>"}) > 0
+
+
+def _manager():
+    manager = MemoryManager.__new__(MemoryManager)
+    manager.name = "sam"
+    manager.prompt_manager = PromptManager()
+    MemoryManager.trace_stats.update({"passed": 0, "rewritten": 0, "dropped": 0})
+    return manager
+
+
+def test_trace_is_judged_and_rewritten_with_the_objection():
+    manager = _manager()
+    verdicts = iter([(False, "it leans on the recollection the reply never uses"), (True, "reaches it")])
+    with patch.object(PromptManager, "reasoning_trace", side_effect=["bad", "good"]) as write, \
+         patch.object(PromptManager, "check_trace", side_effect=lambda *a, **k: next(verdicts)), \
+         patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "m", "") == "good"
+    assert write.call_args_list[0].kwargs["objection"] == ""
+    assert "never uses" in write.call_args_list[1].kwargs["objection"]
+    assert MemoryManager.trace_stats == {"passed": 0, "rewritten": 1, "dropped": 0}
+
+
+def test_trace_that_never_leads_to_the_reply_is_dropped():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", return_value="bad") as write, \
+         patch.object(PromptManager, "check_trace", return_value=(False, "drifts")), \
+         patch("raft.memories.hx.say"), patch("raft.memories.hx.warn"):
+        assert manager.reasoning_trace("q", "a", "", "") == ""
+    assert write.call_count == MemoryManager.TRACE_REWRITES + 1
+    assert MemoryManager.trace_stats["dropped"] == 1
+
+
+def test_existing_trace_is_kept_when_it_passes():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace") as write, \
+         patch.object(PromptManager, "check_trace", return_value=(True, "fine")):
+        assert manager.reasoning_trace("q", "a", "", "", existing="old") == "old"
+    write.assert_not_called()
+
+
+def test_check_trace_parses_the_verdict():
+    manager = PromptManager()
+    with patch.object(PromptManager, "client") as client:
+        message = client.chat.completions.create.return_value.choices[0].message
+        message.content = "PASS\nIt reaches the reply through the latency point."
+        assert manager.check_trace("q", "m", "r", "a", author="Sam") == (True, "It reaches the reply through the latency point.")
+        message.content = "FAIL: it pretends the reply relies on the recollection."
+        passed, why = manager.check_trace("q", "m", "r", "a", author="Sam")
+        assert not passed and why.startswith("it pretends")
+        sent = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "more than the reply itself does" in sent
+
+
+def test_recheck_regenerates_traces_with_recall_and_judges_the_rest(project, monkeypatch):
+    project.finetune_path.parent.mkdir(parents=True, exist_ok=True)
+    project.finetune_path.write_text(json.dumps([
+        {"metadata": {"participants": {"q": "Pat", "a": "Sam"}, "date": "2024-05-01", "url": "u", "context": "an interview"}},
+        {"example": {"question": "Why?", "answer": "Because.", "similar_memories": "from 2023: I said so.", "reasoning": "old-with-recall"}},
+        {"example": {"question": "And?", "answer": "So.", "reasoning": "old-plain"}},
+    ]))
+    calls = []
+
+    def trace(self, question, answer, memories, prev_answer, existing=""):
+        calls.append((question, existing, prev_answer))
+        return existing or "fresh"
+
+    with patch.object(MemoryManager, "__init__", lambda self, *a, **k: None), patch.object(MemoryManager, "reasoning_trace", trace):
+        generate_finetune.recheck_traces(project)
+    assert calls == [("Why?", "", ""), ("And?", "old-plain", "Because.")]
+    rows = json.loads(project.finetune_path.read_text())
+    assert rows[1]["example"]["reasoning"] == "fresh" and rows[2]["example"]["reasoning"] == "old-plain"
+    monkeypatch.chdir(project.root)
+    monkeypatch.setattr("sys.argv", ["raft", "ft:gen", "--recheck-traces"])
+    with patch.object(generate_finetune, "recheck_traces") as recheck, patch.object(oai_finetune, "create_openai_finetune_file") as convert:
+        cli.main()
+    recheck.assert_called_once()
+    assert convert.call_args.kwargs["thinking"] is True

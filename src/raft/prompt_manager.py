@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from openai import OpenAI
 from openai.types.chat import (
@@ -127,26 +127,33 @@ class PromptManager:
         return str(response.choices[0].message.content).strip()
 
     def reasoning_trace(
-        self, question: str, answer: str, memories: str, prev_answer: str, author: str
+        self, question: str, answer: str, memories: str, prev_answer: str, author: str, objection: str = ""
     ) -> str:
         """
-        For thinking models: the private reasoning that leads from what the
-        persona recalled (and the question) to the reply it actually gave.
-        Written after the fact from the real reply, so it teaches how the
-        target moves from memory to answer rather than inventing positions.
+        For thinking models: the private reasoning that leads from the
+        question (and whatever came to mind) to the reply actually given.
+        Written after the fact from the real reply, so it carries the
+        target's position rather than the writer's; the recollection is
+        drawn on only as far as the reply itself does, never forced in.
         """
+        retry = (
+            f"\n\nA previous attempt was rejected: {objection} Write it again so that it leads to the reply."
+            if objection else ""
+        )
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
                 role="system",
                 content=(
-                    f"You are {author}. You are shown a question put to you, what you recalled of your "
+                    f"You are {author}. You are shown a question put to you, what came to mind from your "
                     "earlier writing, and the reply you actually gave. Write the private reasoning that "
-                    "took you from the recollection and the question to that reply, as it went through "
-                    "your head in the moment: first person, present tense, three to six sentences, "
-                    "concrete, in your own voice. Think, do not narrate -- never describe the exchange "
-                    "from outside (no 'the commenter', 'the original claim', 'my reply'). Use the "
-                    "recollection, do not repeat it; no preamble, do not restate the reply, no quotation "
-                    "marks."
+                    "took you from the question to that reply, as it went through your head in the "
+                    "moment: first person, present tense, three to six sentences, concrete, in your own "
+                    "voice. What came to mind may or may not have shaped the reply: draw on it exactly as "
+                    "far as the reply does -- if the reply builds on it, show how; if the reply does not, "
+                    "leave it aside or note in passing that it is not the point here. Never manufacture a "
+                    "link. Think, do not narrate -- never describe the exchange from outside (no 'the "
+                    "commenter', 'the original claim', 'my reply'). No preamble, do not restate the reply, "
+                    "no quotation marks."
                 ),
             ),
             ChatCompletionUserMessageParam(
@@ -154,13 +161,53 @@ class PromptManager:
                 content=(
                     f"Question: {question}\n\n"
                     f"Your previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
-                    f"Recalled:\n{memories or '(nothing specific came to mind)'}\n\n"
-                    f"Your reply:\n{answer}"
+                    f"What came to mind:\n{memories or '(nothing specific)'}\n\n"
+                    f"Your reply:\n{answer}{retry}"
                 ),
             ),
         ]
         response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
         return str(response.choices[0].message.content).strip()
+
+    def check_trace(self, question: str, memories: str, reasoning: str, answer: str, author: str) -> Tuple[bool, str]:
+        """
+        Judge a reasoning trace against the reply it is meant to lead to.
+
+        Returns:
+            (passed, reason): passed when the trace reaches the reply's
+            conclusion and stance, contradicts nothing in it, is not a
+            paraphrase of it, and does not pretend the reply relies on the
+            recollection when the reply shows no sign of that.
+        """
+        messages: List[ChatCompletionMessageParam] = [
+            ChatCompletionSystemMessageParam(
+                role="system",
+                content=(
+                    f"You check one training example for a model of {author}. You are given a question put "
+                    "to them, what came to mind from their earlier writing, the private reasoning written "
+                    "for them, and the reply they actually gave. The reasoning passes only if all hold: it "
+                    "arrives at the reply's conclusion and stance; it claims nothing the reply contradicts; "
+                    "it is not merely a paraphrase or restatement of the reply; and it does not lean on the "
+                    "recollection more than the reply itself does -- if the reply shows no sign of drawing "
+                    "on it, the reasoning must not pretend it did. Answer on the first line with PASS or "
+                    "FAIL, then one sentence saying what is off (FAIL) or how the reasoning reaches the "
+                    "reply (PASS)."
+                ),
+            ),
+            ChatCompletionUserMessageParam(
+                role="user",
+                content=(
+                    f"Question: {question}\n\nWhat came to mind:\n{memories or '(nothing specific)'}\n\n"
+                    f"Reasoning:\n{reasoning}\n\nReply actually given:\n{answer}"
+                ),
+            ),
+        ]
+        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
+        text = str(response.choices[0].message.content or "").strip()
+        first, _, rest = text.partition("\n")
+        passed = first.strip().upper().startswith("PASS")
+        reason = " ".join((first.split(":", 1)[1] if ":" in first else rest).split()).strip() or text[:200]
+        return passed, reason
 
     def contextualise_memories_for_prompt(
         self, memories: List[Dict[str, str]]

@@ -294,9 +294,37 @@ class MemoryManager:
             )
         return summaries
 
-    def reasoning_trace(self, question: str, answer: str, memories: str, prev_answer: str) -> str:
-        """For thinking models: the reasoning from recall to the real reply."""
-        return self.prompt_manager.reasoning_trace(question, answer, memories, prev_answer, author=self.name)
+    # One write plus this many rewrites before a trace is given up on.
+    TRACE_REWRITES = 2
+    # Shared tally, reported at the end of a generation run.
+    trace_stats: Dict[str, int] = {"passed": 0, "rewritten": 0, "dropped": 0}
+
+    def reasoning_trace(
+        self, question: str, answer: str, memories: str, prev_answer: str, existing: str = ""
+    ) -> str:
+        """
+        For thinking models: the reasoning from the question (and recall)
+        to the real reply -- judged against the reply, rewritten with the
+        objection when it fails, and dropped (recall only) when it still
+        fails. An `existing` trace is judged first and kept if it passes.
+        """
+        objection = ""
+        trace = existing
+        for attempt in range(self.TRACE_REWRITES + 1 + (1 if existing else 0)):
+            if not trace:
+                trace = self.prompt_manager.reasoning_trace(
+                    question, answer, memories, prev_answer, author=self.name, objection=objection
+                )
+            passed, why = self.prompt_manager.check_trace(question, memories, trace, answer, author=self.name)
+            if passed:
+                self.trace_stats["rewritten" if objection else "passed"] += 1
+                return trace
+            objection = why
+            hx.say(f"reasoning trace rejected ({why[:120]}); rewriting")
+            trace = ""
+        self.trace_stats["dropped"] += 1
+        hx.warn("no reasoning trace led to the reply; keeping the recall only")
+        return ""
 
     def ask_question(self, question: str, model: str = "gpt-4-turbo", thinking: bool = False) -> str:
         """

@@ -8,7 +8,7 @@ that recall to the reply actually given.
 
 import json
 import time
-from typing import Any
+from typing import Any, Dict
 
 from . import hx
 from .memories import PACE, MemoryManager, MetaDataKeyEnum
@@ -88,7 +88,44 @@ def generate_finetune(dataset: DatasetLike, thinking: bool = False) -> None:
         i += 1
 
     end_json_file(paths.finetune_path)
+    if thinking:
+        hx.say(f"reasoning traces: {MemoryManager.trace_stats}")
     hx.ok(f"generic finetune file generated in: {paths.finetune_path}")
+
+
+def recheck_traces(dataset: DatasetLike, regenerate_with_recall: bool = True) -> Dict[str, int]:
+    """
+    Judge every reasoning trace in the generic file against its reply and
+    rewrite the ones that fail, without redoing retrieval. Examples that
+    carry recall are regenerated outright when regenerate_with_recall is
+    set (the rule about leaning on the recollection only as far as the
+    reply does arrived in 2.8.6; older traces predate it).
+    """
+    paths = dataset_paths(dataset)
+    with paths.finetune_path.open() as f:
+        items = json.load(f)
+    manager = None
+    prev_answer = ""
+    checked = 0
+    for item in items:
+        if "metadata" in item:
+            meta = item["metadata"]
+            manager = MemoryManager(paths, {MetaDataKeyEnum(k): meta[k] for k in ("participants", "date", "url") if k in meta})
+            prev_answer = ""
+            continue
+        example = item.get("example") or {}
+        if manager is None or "answer" not in example:
+            continue
+        memories = example.get("similar_memories", "")
+        existing = "" if (regenerate_with_recall and memories) else example.get("reasoning", "")
+        hx.step(" ".join(example["question"].split())[:100])
+        example["reasoning"] = manager.reasoning_trace(example["question"], example["answer"], memories, prev_answer, existing=existing)
+        prev_answer = example["answer"]
+        checked += 1
+    with paths.finetune_path.open("w") as f:
+        json.dump(items, f, indent=4)
+    hx.ok(f"{checked} reasoning trace(s) checked: {MemoryManager.trace_stats}")
+    return dict(MemoryManager.trace_stats)
 
 
 def generate_benchmark(dataset: DatasetLike, thinking: bool = False) -> None:

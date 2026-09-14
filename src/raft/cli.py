@@ -119,6 +119,12 @@ def main() -> None:
         help="ft:gen / bench:setup: format for a thinking model -- recall and a "
         "reasoning trace in <think> blocks (remembered for later --oai runs).",
     )
+    parser.add_argument(
+        "--recheck-traces",
+        action="store_true",
+        help="ft:gen: judge every reasoning trace in the generic file against its reply, "
+        "rewrite the failures (no retrieval), then rebuild the chat file.",
+    )
 
     args, extra = parser.parse_known_args()
 
@@ -158,7 +164,11 @@ def main() -> None:
         embeddings_helpers.store_grounding_embeddings(dataset)
     elif args.action == "ft:gen":
         thinking = _thinking_mode(dataset, args.thinking)
-        if args.oai:
+        if args.recheck_traces:
+            generate_finetune.recheck_traces(dataset)
+            if not args.generic:
+                oai_finetune.create_openai_finetune_file(dataset, thinking=True)
+        elif args.oai:
             oai_finetune.create_openai_finetune_file(dataset, thinking=thinking)
         elif args.generic:
             generate_finetune.generate_finetune(dataset, thinking=thinking)

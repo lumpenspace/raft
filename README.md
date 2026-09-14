@@ -30,9 +30,12 @@ RAFT rethought for thinking models — the reasoning is in
   the prep phase's question) each training reply opens a `<think>` block with
   the recalled earlier writing and conversations, continues with the
   reasoning that leads from that recall to the reply — written after the fact
-  from the reply the target actually gave — and then gives the reply. Without
-  `--thinking`, the recall stays a system note between question and reply, as
-  before, for models without a thinking phase and the OpenAI API.
+  from the reply the target actually gave, drawing on the recollection only as
+  far as the reply does, and judged against the reply (rewritten when it does
+  not lead there; `--recheck-traces` re-judges an existing file) — and then
+  gives the reply. Without `--thinking`, the recall stays a system note
+  between question and reply, as before, for models without a thinking phase
+  and the OpenAI API.
 - **One conversation, one date.** A transcript is now one conversation (a
   thread branch, a reply chain, an interview) with its own date and setting.
   The system prompt says who the persona is, what day it is and where the
