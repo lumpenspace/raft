@@ -230,7 +230,7 @@ def test_cli_imports_without_prompts_and_adopts_the_target(project, monkeypatch)
     from raft import cli
 
     monkeypatch.chdir(project.root)
-    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "T", "--forum", "https://lw", "--conversations", "1"])
+    monkeypatch.setattr("sys.argv", ["raft", "fetch", "lesswrong", "--user", "T", "--forum", "https://lw", "--conversations", "1"])
     cli.main()
     assert state.load_meta(project)["target"] == "T"
     assert state.dataset_status(project)["transcripts"] == 1
@@ -242,24 +242,47 @@ def test_cli_flags_reach_the_importer(project, monkeypatch):
     from raft import cli
 
     monkeypatch.chdir(project.root)
-    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "T", "--forum", "EA Forum", "--conversations", "0",
-                                     "--min-karma", "3", "--role", "conversation", "--no-older-comments"])
+    monkeypatch.setattr("sys.argv", ["raft", "fetch", "lesswrong", "--user", "T", "--forum", "EA Forum", "--limit", "0",
+                                     "--min-karma", "3", "--role", "conversation", "--no-older-comments",
+                                     "--since", "2024-01-01", "--until", "2024-12-31"])
     with patch("raft.lesswrong.import_lesswrong", return_value={}) as importer:
         cli.main()
     assert importer.call_args.args[1:] == ("https://forum.effectivealtruism.org", "T")
     assert importer.call_args.kwargs == {"role": "conversation", "max_conversations": None, "min_karma": 3,
-                                         "forum_name": "EA Forum", "older_comments_as_grounding": False}
+                                         "forum_name": "EA Forum", "older_comments_as_grounding": False,
+                                         "since": "2024-01-01", "until": "2024-12-31"}
+    # --conversations is the 3.0 spelling of --limit; without either, 200
+    monkeypatch.setattr("sys.argv", ["raft", "fetch", "lesswrong", "--user", "T", "--forum", "https://lw", "--conversations", "5"])
+    with patch("raft.lesswrong.import_lesswrong", return_value={}) as importer:
+        cli.main()
+    assert importer.call_args.kwargs["max_conversations"] == 5
+    monkeypatch.setattr("sys.argv", ["raft", "fetch", "lesswrong", "--user", "T", "--forum", "https://lw"])
+    with patch("raft.lesswrong.import_lesswrong", return_value={}) as importer:
+        cli.main()
+    assert importer.call_args.kwargs["max_conversations"] == 200
+
+
+def test_window_filters_posts_and_stops_listing_comments(project):
+    # comments c1..: 2024-01-01 .. ; posts p1 2023-06-01. A window of 2024 keeps no post.
+    summary = lesswrong.import_lesswrong(project, "https://lw", "T", since="2024-01-01", until="2024-12-31",
+                                          older_comments_as_grounding=True)
+    docs = read_jsonl(project.corpus_path)
+    assert not any(d["title"] == "Own post" for d in docs)
+    assert all(d["date"][:4] == "2024" for d in docs if d["date"])
+    assert summary["transcripts"] >= 1
+    summary = lesswrong.import_lesswrong(project, "https://lw", "T", since="2030-01-01")
+    assert summary == {"documents": 0, "exchanges": 0, "transcripts": 0}
 
 
 def test_cli_unknown_forum_or_user_is_a_usage_error(project, monkeypatch, capsys):
     from raft import cli
 
     monkeypatch.chdir(project.root)
-    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "T", "--forum", "reddit"])
+    monkeypatch.setattr("sys.argv", ["raft", "fetch", "lesswrong", "--user", "T", "--forum", "reddit"])
     with pytest.raises(SystemExit):
         cli.main()
     assert "unknown forum" in capsys.readouterr().err
-    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "nobody", "--forum", "https://lw"])
+    monkeypatch.setattr("sys.argv", ["raft", "fetch", "lesswrong", "--user", "nobody", "--forum", "https://lw"])
     with pytest.raises(SystemExit):
         cli.main()
     assert "no user" in capsys.readouterr().err

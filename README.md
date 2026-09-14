@@ -21,6 +21,28 @@ ok then, a friend asked so now it is more lenient with the version number and us
 
 (2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
 
+## 3.1
+
+- **`raft fetch <source>`** — every importer is now one command with one shape:
+  `raft fetch lesswrong --user gwern`, `raft fetch tweets --user gwern`, `raft
+  fetch substack --blog garymarcus`. New to the command line (they were
+  wizard-only): `raft fetch rss --url <feed or site>`, `raft fetch url --url
+  <page>`, `raft fetch pdf --file <path>`. Each asks for what its flags leave
+  out. `raft lesswrong` and `raft tweets` still work and say where they went;
+  the bare `raft fetch` that meant Substack is now `raft fetch substack`. The
+  wizard names the command behind each source as it imports it.
+- **Tweets without prompts.** `raft fetch tweets --user <handle>` fetches a
+  public X account live (a dotted handle, `alice.bsky.social`, is Bluesky;
+  `--network both` merges the two); `--archive <export>` reads an X export,
+  narrowed to `--user` when given. The Community Archive is on; a twitterapi.io
+  key is read from `TWITTERAPI_IO_KEY`.
+- **Shared window and cap.** `--since` / `--until` (YYYY-MM-DD) keep only what
+  was written in the window, on every source that has dates; `--limit N` keeps
+  the newest N — conversations for lesswrong and tweets, documents for
+  substack and rss. Substack and LessWrong stop paging once the listing
+  passes `--since`. `--conversations` remains as the 3.0 spelling of
+  `--limit` for lesswrong, which still defaults to 200.
+
 ## 3.0
 
 The first release on PyPI since 2.6 (`pip install -U raft-ft`), so it also
@@ -284,8 +306,8 @@ The interview transcripts used within a RAG-inspired process retreiving "memorie
 
 The steps to reproduce this process are as follows:
 
-1. Create a dataset of interview transcripts featuring the target human. Each interview is a separate `data/{name}_transcript_{i}.json` file holding `{"participants": {"q": ..., "a": ...}, "date": ..., "url": ..., "exchanges": [[question, answer], ...]}`. As of 2.0 you don't have to write these by hand: `raft interactive` takes chat-message JSON, ariadne output or plain unstructured transcripts and produces them for you, and `raft lesswrong` turns a forum user's comment threads into dated ones.
-2. Create a dataset of the author's past written output — `data/{name}.jsonl`, one `{"title", "link", "date", "content"}` object per line. `raft fetch` builds this from a substack; `raft tweets` from a tweet archive; `raft lesswrong` from a forum user's posts and comments; `raft interactive` from arbitrary local files.
+1. Create a dataset of interview transcripts featuring the target human. Each interview is a separate `data/{name}_transcript_{i}.json` file holding `{"participants": {"q": ..., "a": ...}, "date": ..., "url": ..., "exchanges": [[question, answer], ...]}`. As of 2.0 you don't have to write these by hand: `raft interactive` takes chat-message JSON, ariadne output or plain unstructured transcripts and produces them for you, and `raft fetch lesswrong` turns a forum user's comment threads into dated ones.
+2. Create a dataset of the author's past written output — `data/{name}.jsonl`, one `{"title", "link", "date", "content"}` object per line. `raft fetch substack` builds this from a substack, `raft fetch rss` from a blog or feed, `raft fetch tweets` from a tweet archive, `raft fetch lesswrong` from a forum user's posts and comments; `raft interactive` from arbitrary local files.
 3. Split the past output dataset in chunks of a size suitable for the chosen embedding model (8192 tokens for Openai's text-embedding-ada-002), and collect metadata and embeddings for each chunk.
 4. Store the resulting metadata and embeddings in a vector database (we use ChromaDB).
 
@@ -342,10 +364,19 @@ The following actions are available:
 
 - init: Initialize a persona project in the current or specified directory.
 - interactive: Guided session in five phases: gather, prep, train, eval, serve.
-- tweets: Build a dataset from tweets via ariadne interactive.
-- lesswrong: Import a LessWrong / EA Forum user: --user <handle> (--forum, --conversations,
-  --min-karma, --role auto|corpus|conversation, --no-older-comments). Asks without --user.
-- fetch: Fetch the blog from Substack and store it in the data directory.
+- fetch <source>: Import one source into the project. Sources:
+    lesswrong  a LessWrong / EA Forum user: --user <handle> (--forum, --min-karma,
+               --no-older-comments)
+    tweets     X / Bluesky through ariadne: --user <handle> (a dotted handle is Bluesky)
+               or --archive <X export>; --network x|bluesky|both
+    substack   a whole publication as grounding: --blog <subdomain>
+    rss        a blog, RSS or Atom feed as grounding: --url <feed or site> (--no-full-pages)
+    url        one web page as grounding: --url <page>
+    pdf        PDF files as grounding: --file <path> (repeatable)
+  Shared: --since / --until YYYY-MM-DD keep only what was written in the window;
+  --limit N keeps the newest N (conversations for lesswrong and tweets, documents
+  otherwise; lesswrong defaults to 200); --role auto|corpus|conversation for the
+  two sources that feed both. Each source asks for what its flags leave out.
 - chunk: Chunk the blog into 4096 token pieces and store them in /data.
 - embed: Create embeddings for the chunks and store them.
 - ft:gen: Generate finetune files for the blog (--thinking for reasoning models).

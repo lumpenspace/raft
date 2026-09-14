@@ -4,7 +4,8 @@
 1. gather -- collect documents (substack / RSS / URLs / PDFs / local
    files / LessWrong posts) and conversations (dumps, chat logs, tweets
    via ariadne, LessWrong comment threads), one source at a time,
-   combined into one dataset.
+   combined into one dataset. Each fetched source is also one command,
+   `raft fetch <source>`; the wizard names it as it imports.
 2. prep   -- chunk + embed the corpus, then generate the finetune
    examples, each augmented with summaries of the target's relevant
    *earlier* writings.
@@ -162,16 +163,19 @@ def gather_conversations(name: str, target: str) -> bool:
     return added
 
 
-def add_substack(name: str) -> None:
+def add_substack(
+    name: DatasetLike, blog: str = "", since: str = "", until: str = "", limit: int | None = None
+) -> None:
     """
     Fetch a whole substack (archive API) straight into the corpus --
     no data/{blog}-substack-com.jsonl side file, which pick_dataset
-    would otherwise offer as a phantom dataset.
+    would otherwise offer as a phantom dataset. The window and limit
+    are checked against the archive listing, before any post is fetched.
     """
-    blog = ask("Substack subdomain (e.g. garymarcus)")
+    blog = blog or ask("Substack subdomain (e.g. garymarcus)")
     hx.step(f"fetching {blog}.substack.com (polite delays between posts)")
     records = list(
-        substack_embeddings.fetch_and_parse(f"https://{blog}.substack.com")
+        substack_embeddings.fetch_and_parse(f"https://{blog}.substack.com", since=since, until=until, limit=limit)
     )
     added = sources.append_corpus_records(name, records)
     hx.ok(f"{added} new document(s) from {blog}.substack.com")
@@ -183,6 +187,10 @@ SOURCE_KINDS = [
     "conversation files / chat logs", "LessWrong / EA Forum (posts + comments)",
 ]
 TWEETS, LESSWRONG = 0, 7
+
+# The `raft fetch <source>` behind each fetched kind (local files and chat
+# logs have no fetcher: they are imported from paths).
+FETCH_SOURCES = {TWEETS: "tweets", 1: "substack", 2: "rss", 3: "url", 4: "pdf", LESSWRONG: "lesswrong"}
 
 # Sources that can feed both destinations at once, and how.
 SPLIT_ROLES = {
@@ -259,6 +267,8 @@ def phase_gather(name: DatasetLike, target: str) -> None:
     state.update_meta(name, source_plan=plan)
     for item in plan:
         hx.step(f"{SOURCE_KINDS[item['kind']]} -> {item['role']}")
+        if item["kind"] in FETCH_SOURCES:
+            hx.say(f"  without the wizard: {dataset_paths(name).command('fetch ' + FETCH_SOURCES[item['kind']])}")
         try:
             import_planned_source(name, target, item)
         except (requests.RequestException, ET.ParseError, ValueError, RuntimeError, OSError) as exc:

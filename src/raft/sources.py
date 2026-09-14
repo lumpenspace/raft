@@ -65,6 +65,36 @@ def date_num(value: Any) -> int:
     return int(day.replace("-", "")) if day else 0
 
 
+def in_window(date: Any, since: str = "", until: str = "") -> bool:
+    """
+    Whether a date falls inside [since, until] (YYYY-MM-DD, either end
+    optional). An undated record fails a bounded window: the bound is a
+    promise about what was imported.
+    """
+    day = iso_date(date)
+    if not since and not until:
+        return True
+    if not day:
+        return False
+    return (not since or day >= since) and (not until or day <= until)
+
+
+def select_records(
+    records: List[Dict[str, Any]], since: str = "", until: str = "", limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    The shared `raft fetch` filters: keep records dated within the window,
+    then the newest `limit` of them (undated ones sort last).
+    """
+    kept = [r for r in records if in_window(r.get("date"), since, until)]
+    dropped = len(records) - len(kept)
+    if dropped:
+        hx.say(f"  {dropped} record(s) outside {since or '...'}..{until or '...'} left out")
+    if limit:
+        kept = sorted(kept, key=lambda r: iso_date(r.get("date")), reverse=True)[:limit]
+    return kept
+
+
 def _http_get(url: str) -> str:
     """Fetch a URL and return its body text."""
     response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
@@ -238,18 +268,26 @@ def resolve_feed(url: str) -> List[Dict[str, str]]:
     raise ValueError(f"{url} is neither a feed nor a page that links to one")
 
 
-def fetch_feed(dataset: DatasetLike, url: str, fetch_pages: bool = True) -> int:
+def fetch_feed(
+    dataset: DatasetLike,
+    url: str,
+    fetch_pages: bool = True,
+    since: str = "",
+    until: str = "",
+    limit: Optional[int] = None,
+) -> int:
     """
     Import an RSS/Atom feed into the corpus.
 
     Entries whose feed content is a teaser (shorter than
     FULL_PAGE_THRESHOLD chars) have their linked page fetched instead
-    when fetch_pages is set.
+    when fetch_pages is set. The window and limit are applied to the
+    feed's entries before any page is fetched.
 
     Returns:
         int: Number of documents added (already-imported links skipped).
     """
-    entries = resolve_feed(url)
+    entries = select_records(resolve_feed(url), since, until, limit)
     records: List[Dict[str, Any]] = []
     for entry in entries:
         text = html_to_text(entry["html"])

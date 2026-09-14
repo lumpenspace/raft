@@ -18,14 +18,15 @@ examples/gwern/bootstrap.sh ~/personas/gwern
 The script is `raft init` plus one command:
 
 ```bash
-raft lesswrong --user gwern --conversations 200
+raft fetch lesswrong --user gwern --limit 200
 ```
 
 No API key is needed for this step; it takes a few minutes, mostly polite
 delays between pages of the public GraphQL API. The script refuses to run into
 a project that already has conversations: the importer appends, so a second
-run would duplicate them. `CONVERSATIONS=0` takes every thread; `--min-karma`
-and `--role corpus|conversation` are there too (`raft lesswrong -h`).
+run would duplicate them. `CONVERSATIONS=0` takes every thread; `--min-karma`,
+`--role corpus|conversation` and `--since` / `--until` are there too
+(`raft fetch lesswrong -h`).
 
 What you get (September 2026): 11.8k grounding documents, 200 conversations,
 247 exchanges, dated 2021–2026. The project's `metadata/state.json` records
