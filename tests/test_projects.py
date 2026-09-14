@@ -136,3 +136,21 @@ def test_fresh_interactive_session_asks_sources_before_phases(project):
          patch("raft.flows.choose", side_effect=lambda *args, **kwargs: calls.append("phase") or 5):
         flows.run_interactive(project)
     assert calls == ["sources", "phase"]
+
+
+def test_passthrough_flags_never_become_the_dataset_name(project, monkeypatch):
+    from raft import hf_finetune
+
+    monkeypatch.chdir(project.root)
+    monkeypatch.setattr("sys.argv", ["raft", "ft:run", "--model", "org/name", "--target", "mps", "--method", "lora",
+                                     "--epochs", "2", "--max-length", "8192", "--no-interactive"])
+    with patch.object(hf_finetune, "run_hf_finetune", return_value="") as run:
+        cli.main()
+    assert run.call_args.args[0].root == project.root
+    assert run.call_args.args[1] == "org/name"
+    assert run.call_args.kwargs["opbdh_args"] == ["--target", "mps", "--method", "lora", "--epochs", "2", "--max-length", "8192"]
+    # an explicit legacy name still works, before or after the flags
+    monkeypatch.setattr("sys.argv", ["raft", "ft:run", "old", "--model", "org/name", "--provider", "primeintellect"])
+    with patch.object(hf_finetune, "run_hf_finetune", return_value="") as run:
+        cli.main()
+    assert run.call_args.args[0].name == "old" and run.call_args.kwargs["opbdh_args"] == ["--provider", "primeintellect"]

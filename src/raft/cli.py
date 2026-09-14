@@ -3,6 +3,7 @@ This module contains the main CLI functionality for the RAFT project.
 """
 
 import argparse
+import sys
 from raft import (
     files_helper,
     embeddings_helpers,
@@ -131,7 +132,9 @@ def main() -> None:
         help="ft:gen: like --recheck-traces, but write every trace afresh first (a new writer model, say).",
     )
 
-    args, extra = parser.parse_known_args()
+    argv, passthrough = split_passthrough(sys.argv[1:], parser)
+    args, extra = parser.parse_known_args(argv)
+    extra = passthrough + extra
 
     if args.action not in ("ft:run",) and extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
@@ -234,6 +237,42 @@ def main() -> None:
             print(f"Answer: {answer}")
     else:
         print(f"Unknown action: {args.action}")
+
+
+def split_passthrough(argv: list, parser: argparse.ArgumentParser) -> tuple:
+    """
+    Separate raft's own arguments from flags meant for the finetuning
+    backend (`--target mps`, `--provider primeintellect`, `--epochs 2`).
+
+    argparse would otherwise hand an unknown flag's value to the optional
+    dataset-name positional, so inside a project `raft ft:run --target mps`
+    became a dataset called "mps" with a bare --target. Anything after an
+    unknown --flag belongs to that flag until the next --flag.
+    """
+    known = {option for action in parser._actions for option in action.option_strings}
+    takes_value = {
+        option for action in parser._actions for option in action.option_strings
+        if action.nargs != 0 and not isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction))
+    }
+    ours: list = []
+    theirs: list = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        name = token.split("=", 1)[0]
+        if token.startswith("--") and name not in known:
+            theirs.append(token)
+            i += 1
+            while i < len(argv) and not argv[i].startswith("--"):
+                theirs.append(argv[i])
+                i += 1
+            continue
+        ours.append(token)
+        if token in takes_value and "=" not in token and i + 1 < len(argv):
+            ours.append(argv[i + 1])
+            i += 1
+        i += 1
+    return ours, theirs
 
 
 def _thinking_mode(dataset, flag: bool) -> bool:
