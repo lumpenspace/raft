@@ -21,10 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from openai import OpenAI
-
 from . import hx
 from .project import DatasetLike, dataset_paths
+from .prompt_manager import helper_client
 
 STRUCTURER_MODEL = os.environ.get("RAFT_LLM_MODEL", "gpt-4o")
 
@@ -217,7 +216,7 @@ def structure_raw_conversation(raw_text: str, target: str) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: participants/date/url/exchanges dict.
     """
-    client = OpenAI()
+    client = helper_client()
     if len(raw_text) > MAX_STRUCTURE_CHARS:
         hx.warn(
             f"source is {len(raw_text)} chars; structuring the first "

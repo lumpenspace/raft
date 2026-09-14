@@ -21,9 +21,17 @@ _client = None
 
 
 def _get_client() -> OpenAI:
+    """
+    The embeddings client. RAFT_EMBEDDING_BASE_URL / RAFT_EMBEDDING_API_KEY
+    let embeddings live on a different server than the chat models (an
+    ollama next to an mlx_lm.server, say); unset, the OpenAI defaults apply.
+    """
     global _client
     if _client is None:
-        _client = OpenAI()
+        _client = OpenAI(
+            base_url=os.environ.get("RAFT_EMBEDDING_BASE_URL") or None,
+            api_key=os.environ.get("RAFT_EMBEDDING_API_KEY") or None,
+        )
     return _client
 
 

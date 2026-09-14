@@ -47,6 +47,13 @@ RAFT rethought for thinking models — the reasoning is in
   (`RAFT_MAX_EXAMPLE_TOKENS`); the fixed rate-limit sleeps became `RAFT_PACE`
   (default 0); the system prompt no longer mentions a function that will be
   "called automatically".
+- **Three roles, three endpoints.** The persona model answers through
+  `OPENAI_BASE_URL`; the helper LLM that writes summaries and reasoning traces
+  can sit elsewhere (`RAFT_LLM_BASE_URL`, `RAFT_LLM_MODEL`, and
+  `RAFT_REASONING_MODEL` for a stronger reasoner); embeddings too
+  (`RAFT_EMBEDDING_BASE_URL`, `RAFT_EMBEDDING_MODEL`). Unset, each falls back
+  to the OpenAI defaults — so a finetune served by `mlx_lm.server` can sit next
+  to an ollama doing recall.
 
 ## 2.7
 
