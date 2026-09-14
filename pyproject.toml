@@ -52,14 +52,14 @@ raft = "raft.cli:main"
 
 [project.optional-dependencies]
 # Huggingface finetuning on a GPU pod (`raft ft:run` with a non-OpenAI model).
-hf = ["opbdh[ft]>=1.10.0,<2"]
+hf = ["opbdh[ft]>=1.10.1,<2"]
 # PDF sources in the gather phase of `raft interactive`.
 pdf = ["pypdf>=4.0"]
 # `raft ft:run --target mps|cuda`: the native opbdh runner trains in this
 # environment, so it needs the stack a pod would install (opbdh 1.10's
 # runner requirements, plus torch).
 local = [
-  "opbdh[ft]>=1.10.0,<2",
+  "opbdh[ft]>=1.10.1,<2",
   "torch>=2.4",
   "accelerate>=1.14,<2",
   "datasets>=4.8,<5",
