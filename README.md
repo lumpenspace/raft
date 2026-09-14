@@ -74,7 +74,11 @@ multi-turn exchange, and every comment by the target is an answer exactly
 once. Top-level comments on the target's own posts are the target talking to
 themselves and go to grounding instead. The importer works newest first and
 stops once it has the number of conversations you asked for (default 200),
-optionally skipping comments below a karma threshold.
+optionally skipping comments below a karma threshold. The comments beyond
+those conversations are the target's past writing too, and (2.8.3, on by
+default) become dated grounding documents, each opening with a line of what
+it replied to — for a prolific commenter this is most of what there is to
+recall.
 
 **Training on your own Mac (or CUDA box).** `raft ft:run --model <org/name>
 --target mps` (or `--target cuda`) trains the same native opbdh recipe on this

@@ -14,6 +14,11 @@ exactly once. Top-level comments on the target's own posts (quick
 takes, replies to nobody) are the target talking to themselves and go
 to grounding instead.
 
+A prolific commenter's history is also their past writing: with
+`older_comments_as_grounding`, every comment not used as a conversation
+answer becomes a dated grounding document (with a line of what it
+replied to), so later conversations can recall it.
+
 The API caps offset pagination at 2000 rows, so listings page by date
 (`before`) instead, and parent comments are fetched in aliased batches.
 """
@@ -25,7 +30,7 @@ import requests
 
 from . import hx
 from .convo_structurer import messages_to_exchanges, write_transcript
-from .interactive import ask, choose
+from .interactive import ask, choose, confirm
 from .project import DatasetLike, dataset_paths
 from .sources import USER_AGENT, append_corpus_records, iso_date
 
@@ -43,6 +48,8 @@ REQUEST_DELAY = 0.5
 POST_EXCERPT_CHARS = 1500
 # Interlocutors can be long-winded; the persona's own replies are never cut.
 QUESTION_CHARS = 4000
+# A comment kept as grounding opens with this much of what it replied to.
+REPLY_CONTEXT_CHARS = 300
 
 USER_FIELDS = "_id username displayName slug postCount commentCount"
 POST_FIELDS = (
@@ -272,7 +279,7 @@ def build_conversations(
             full = posts.get(comment.get("postId") or "") or post
             groups.append({
                 "date": date, "url": url, "title": post.get("title") or "", "questioner": author_of(full),
-                "exchanges": [[post_stub(full), text_of(comment)]],
+                "exchanges": [[post_stub(full), text_of(comment)]], "comment_ids": [comment["_id"]],
             })
             continue
 
@@ -302,22 +309,60 @@ def build_conversations(
             groups.append({
                 "date": min(d for d in dates if d) if any(dates) else date, "url": url,
                 "title": post.get("title") or "", "questioner": questioner, "exchanges": exchanges,
+                "comment_ids": [n["_id"] for n in path if n.get("userId") == target_id],
             })
     return groups, quick_takes
+
+
+def _unique_titles(records: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Titles must be unique: the embedding store keys chunks by title and part."""
+    used: Dict[str, int] = {}
+    for record in records:
+        used[record["title"]] = used.get(record["title"], 0) + 1
+        if used[record["title"]] > 1:
+            record["title"] = f"{record['title']} #{used[record['title']]}"
+    return records
 
 
 def quick_take_records(quick_takes: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     """Grounding documents from quick takes, titles kept unique per day."""
     records = []
-    used: Dict[str, int] = {}
     for comment in sorted(quick_takes, key=lambda c: c.get("postedAt") or ""):
         date = iso_date(comment.get("postedAt")) or "undated"
         title = f"{(comment.get('post') or {}).get('title') or 'quick take'}, {date}"
-        used[title] = used.get(title, 0) + 1
-        if used[title] > 1:
-            title = f"{title} #{used[title]}"
         records.append({"title": title, "link": comment.get("pageUrl") or "", "date": iso_date(comment.get("postedAt")), "content": text_of(comment)})
-    return records
+    return _unique_titles(records)
+
+
+def comment_records(
+    comments: List[Dict[str, Any]], parents: Dict[str, Optional[Dict[str, Any]]]
+) -> List[Dict[str, str]]:
+    """
+    Grounding documents from comments: each opens with a line of what it
+    replied to (the parent comment, or the post's title), then the comment.
+    """
+    records = []
+    for comment in sorted(comments, key=lambda c: c.get("postedAt") or ""):
+        post = comment.get("post") or {}
+        date = iso_date(comment.get("postedAt")) or "undated"
+        parent = parents.get(comment.get("parentCommentId") or "")
+        replied = text_of(parent) if parent else ""
+        if replied:
+            lead = " ".join(replied.split())
+            if len(lead) > REPLY_CONTEXT_CHARS:
+                lead = lead[:REPLY_CONTEXT_CHARS].rstrip() + " [...]"
+            opening = f"Replying to {author_of(parent)} ({lead})"
+        elif post:
+            opening = f'Commenting on "{post.get("title") or "a post"}" by {author_of(post)}'
+        else:
+            opening = "Commenting on a wiki page"
+        records.append({
+            "title": f'comment on "{post["title"]}", {date}' if post.get("title") else f"wiki comment, {date}",
+            "link": comment.get("pageUrl") or "",
+            "date": iso_date(comment.get("postedAt")),
+            "content": f"{opening}:\n\n{text_of(comment)}",
+        })
+    return _unique_titles(records)
 
 
 def write_transcripts(
@@ -349,6 +394,7 @@ def import_lesswrong(
     max_conversations: Optional[int] = None,
     min_karma: Optional[int] = None,
     forum_name: str = "LessWrong",
+    older_comments_as_grounding: bool = False,
 ) -> Dict[str, int]:
     """
     Import a user's forum activity.
@@ -359,6 +405,9 @@ def import_lesswrong(
         max_conversations: Stop after this many thread branches, newest
             first (comments are listed page by page until there are enough).
         min_karma: Skip comments scored below this.
+        older_comments_as_grounding: Every comment not used as a
+            conversation answer becomes a dated grounding document
+            (needs a grounding role).
 
     Returns:
         {"documents", "exchanges", "transcripts"} counts.
@@ -377,6 +426,7 @@ def import_lesswrong(
         posts = list_by_date(base_url, "posts", "userPosts", user["_id"], POST_FIELDS)
         summary["documents"] += append_corpus_records(paths, [post_record(p) for p in posts if usable_post(p)])
 
+    grounding_comments = older_comments_as_grounding and role in ("auto", "corpus")
     hx.step("listing comments" + (" and the threads they reply to" if want_threads else ""))
     comments: List[Dict[str, Any]] = []
     known: Dict[str, Dict[str, Any]] = {}
@@ -384,11 +434,14 @@ def import_lesswrong(
     top_level_posts: Dict[str, Optional[Dict[str, Any]]] = {}
     groups: List[Dict[str, Any]] = []
     quick_takes: List[Dict[str, Any]] = []
+    enough = False
     for page in iter_by_date(base_url, "comments", "allRecentComments", user["_id"], COMMENT_FIELDS):
         page = [c for c in page if not c.get("deleted") and text_of(c)]
         if min_karma is not None:
             page = [c for c in page if (c.get("baseScore") or 0) >= min_karma]
         comments.extend(page)
+        if enough:
+            continue  # only listing the rest for grounding
         if want_threads:
             ancestors.update(resolve_ancestors(base_url, page, known))
             post_ids = {
@@ -398,9 +451,22 @@ def import_lesswrong(
             top_level_posts.update(fetch_documents(base_url, "post", post_ids - set(top_level_posts), POST_FIELDS))
         groups, quick_takes = build_conversations(comments, user["_id"], ancestors, top_level_posts)
         if want_threads and max_conversations and len(groups) >= max_conversations:
-            break
+            enough = True
+            if not grounding_comments:
+                break
     if max_conversations:
         groups = groups[:max_conversations]  # newest first
+    if grounding_comments:
+        used = {cid for g in groups for cid in g.get("comment_ids", [])} if want_threads else set()
+        used.update(c["_id"] for c in quick_takes)
+        older = [c for c in comments if c["_id"] not in used]
+        hx.step(f"{len(older)} older comment(s) as grounding; fetching what they replied to")
+        parents = dict(known)
+        parents.update(fetch_documents(
+            base_url, "comment",
+            {c["parentCommentId"] for c in older if c.get("parentCommentId")} - set(parents), COMMENT_FIELDS,
+        ))
+        summary["documents"] += append_corpus_records(paths, comment_records(older, parents))
 
     if role in ("auto", "corpus") and quick_takes:
         summary["documents"] += append_corpus_records(paths, quick_take_records(quick_takes))
@@ -430,6 +496,10 @@ def run_lesswrong_source(dataset: DatasetLike, target: str, role: str = "auto") 
         max_conversations = int(raw) if raw.strip().isdigit() else None
         raw = ask("Skip comments below this karma (empty = keep all)", "")
         min_karma = int(raw) if raw.strip().lstrip("-").isdigit() else None
+    older = role != "conversation" and confirm(
+        "Also use the comments beyond the conversations as grounding documents (their past writing)?", default=True
+    )
     return import_lesswrong(
-        dataset, base_url, handle, role=role, max_conversations=max_conversations, min_karma=min_karma, forum_name=forum_name
+        dataset, base_url, handle, role=role, max_conversations=max_conversations, min_karma=min_karma,
+        forum_name=forum_name, older_comments_as_grounding=older,
     )
