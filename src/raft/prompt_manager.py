@@ -65,7 +65,8 @@ class PromptManager:
             instruction = (
                 "Decide whether it bears on the question. If it does, restate its relevant point in "
                 "one or two sentences, in the first person, as a recollection you could draw on "
-                "(\"I've argued that...\") -- type it directly, no preamble. If it does not, type 'skip'."
+                "(\"I've argued that...\") -- type it directly, no preamble. If it does not, reply with "
+                "the single word skip and nothing else."
             )
         else:
             instruction = (
@@ -109,8 +110,8 @@ class PromptManager:
                     f"You are {author}. You are shown a question put to you, what you recalled of your "
                     "earlier writing, and the reply you actually gave. Write the private reasoning that "
                     "took you from the recollection and the question to that reply: first person, present "
-                    "tense, three to six sentences, concrete, in your own voice. No preamble, do not "
-                    "restate the reply, no quotation marks."
+                    "tense, three to six sentences, concrete, in your own voice. Use the recollection, do "
+                    "not repeat it; no preamble, do not restate the reply, no quotation marks."
                 ),
             ),
             ChatCompletionUserMessageParam(

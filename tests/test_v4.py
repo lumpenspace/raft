@@ -151,3 +151,28 @@ def test_thinking_flag_sticks_to_the_dataset(project, monkeypatch):
 
 def test_pace_defaults_to_no_waiting():
     assert memories.PACE == 0
+
+
+def test_a_summary_that_starts_with_skip_is_a_skip(project):
+    manager = MemoryManager.__new__(MemoryManager)
+    manager.name = "sam"
+    manager.prompt_manager = PromptManager()
+    for reply, kept in (("skip", False), ("Skip.\nSKIP I've argued that x.", False), ("I've argued that x.", True)):
+        with patch.object(PromptManager, "summarize_memory", return_value=reply):
+            got = manager.summarize_memory({"date": "2024-01-01", "document": "d"}, "q", "")
+        assert bool(got["memory"]) is kept
+
+
+def test_serve_chats_with_a_local_model_behind_an_endpoint(project, monkeypatch):
+    from raft import serve
+
+    state.record_finetuned_model(project, "/models/adapter", "hf")
+    with patch("raft.serve.ask", side_effect=[""]), patch("raft.serve.MemoryManager") as manager, \
+         patch("raft.serve.hx.say") as say:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        serve.run_serve(project, standalone=False)
+        assert "mlx_lm.server" in say.call_args.args[0]
+        manager.assert_not_called()
+        monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8080/v1")
+        serve.run_serve(project, standalone=False)
+        manager.assert_called_once()

@@ -11,6 +11,7 @@ be run from here without the training stack, so for those we print a
 short serving recipe instead.
 """
 
+import os
 from pathlib import Path
 
 from . import hx, state
@@ -19,17 +20,24 @@ from .memories import MemoryManager, preview_context
 from .project import DatasetLike, dataset_paths
 
 HF_SERVE_RECIPE = """\
-That model is a local LoRA adapter; serve it with the peft stack, e.g.:
+That model is a local LoRA adapter. Serve it behind any OpenAI-compatible
+endpoint and point raft at it -- on a Mac, merge and convert for mlx-lm:
 
+  python - <<'EOF'
   from peft import AutoPeftModelForCausalLM
   from transformers import AutoTokenizer
-
   model = AutoPeftModelForCausalLM.from_pretrained("{adapter}")
-  tokenizer = AutoTokenizer.from_pretrained(model.peft_config["default"].base_model_name_or_path)
+  model.merge_and_unload().save_pretrained("merged")
+  AutoTokenizer.from_pretrained("{adapter}").save_pretrained("merged")
+  EOF
+  mlx_lm.convert --hf-path merged --mlx-path persona-mlx -q
+  mlx_lm.server --model persona-mlx --port 8080
 
-or merge it and point vLLM / ollama at the result. Retrieval context for
-each question is what `raft serve` shows above the answers -- the same
-preview is available programmatically via raft.memories.preview_context."""
+  OPENAI_BASE_URL=http://localhost:8080/v1 OPENAI_API_KEY=x raft serve --model persona-mlx
+
+(vLLM or llama-server work the same way.) Retrieval context for each
+question is what `raft serve` shows above the answers -- the same preview
+is available programmatically via raft.memories.preview_context."""
 
 
 def is_local_adapter(dataset: DatasetLike, model: str) -> bool:
@@ -89,7 +97,8 @@ def run_serve(
                 "run `raft interactive`"
             )
 
-    if is_local_adapter(paths, model):
+    # A custom endpoint means the local model is already being served there.
+    if is_local_adapter(paths, model) and not os.environ.get("OPENAI_BASE_URL"):
         hx.say(HF_SERVE_RECIPE.format(adapter=model))
         return
 

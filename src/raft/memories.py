@@ -222,10 +222,11 @@ class MemoryManager:
             author=self.name,
             useful_check=not no_useful_check,
         )
-        if re.sub(r"\W+", "", summary).lower() != "skip":
-            return {"date": memory["date"], "memory": summary}
-        else:
+        # A summariser that says "skip" and then keeps talking has still
+        # decided to skip; only a recollection that starts as one counts.
+        if re.match(r"^\W*skip\b", summary, re.IGNORECASE):
             return {"date": memory["date"], "memory": ""}
+        return {"date": memory["date"], "memory": summary}
 
     def summarize_helpful_memories(
         self,
