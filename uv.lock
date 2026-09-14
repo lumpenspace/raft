@@ -3146,6 +3146,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "build" },
+    { name = "jinja2" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "twine" },
@@ -3173,6 +3174,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "chromadb", specifier = ">=1.5.9,<2" },
     { name = "datasets", marker = "extra == 'local'", specifier = ">=4.8,<5" },
+    { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1" },
     { name = "opbdh", extras = ["ft"], marker = "extra == 'hf'", specifier = ">=1.10.0,<2" },
     { name = "opbdh", extras = ["ft"], marker = "extra == 'local'", specifier = ">=1.10.0,<2" },
     { name = "openai", specifier = ">=1.14" },

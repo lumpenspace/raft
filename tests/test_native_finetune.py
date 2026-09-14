@@ -102,3 +102,55 @@ def test_local_target_trains_through_opbdh_launch_local(dataset, tmp_path):
 def test_local_target_rejects_unknown_accelerator(dataset):
     with pytest.raises(SystemExit):
         run_hf_finetune("d", "test/model", ["--target", "tpu"])
+
+
+QWEN38_STYLE = """{%- for message in messages %}
+    {%- set content = message.content|trim %}
+    {%- if message.role == "assistant" %}
+        {%- set reasoning_content = '' %}
+        {%- if message.reasoning_content is string %}
+            {%- set reasoning_content = message.reasoning_content %}
+        {%- endif %}
+        {{- '<|im_start|>assistant\\n<think>\\n' + reasoning_content + '\\n</think>\\n\\n' + content + '<|im_end|>\\n' }}
+    {%- else %}
+        {{- '<|im_start|>' + message.role + '\\n' + content + '<|im_end|>\\n' }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}{{- '<|im_start|>assistant\\n<think>\\n' }}{%- endif %}"""
+
+
+def test_thinking_template_patch_recovers_reasoning_from_the_reply():
+    from raft.hf_finetune import thinking_chat_template
+
+    patched = thinking_chat_template(QWEN38_STYLE)
+    assert patched and "'</think>' in content" in patched
+    jinja2 = pytest.importorskip("jinja2")
+    render = jinja2.Environment().from_string(patched).render
+    messages = [{"role": "user", "content": "Why?"},
+                {"role": "assistant", "content": "<think>\nRecalling: x.\n\nSo y.\n</think>\n\nBecause."}]
+    full = render(messages=messages, add_generation_prompt=False)
+    prompt = render(messages=messages[:1], add_generation_prompt=True)
+    assert full == "<|im_start|>user\nWhy?<|im_end|>\n<|im_start|>assistant\n<think>\nRecalling: x.\n\nSo y.\n</think>\n\nBecause.<|im_end|>\n"
+    assert full.startswith(prompt)  # trl masks the prompt as a token prefix
+    # a native reasoning_content field still wins, and templates that already split are left alone
+    assert "native" in render(messages=[{"role": "assistant", "content": "r", "reasoning_content": "native"}])
+    assert thinking_chat_template(patched) is None
+    assert thinking_chat_template("{{ messages[0].content }}") is None
+
+
+def test_thinking_datasets_ship_the_template_with_the_job(dataset, tmp_path):
+    from raft import state
+    from raft.hf_finetune import install_thinking_template
+
+    state.update_meta("d", thinking=True)
+    with patch("raft.hf_finetune.fetch_chat_template", return_value=QWEN38_STYLE):
+        _, project, job, _ = prepare_finetune("d", "test/model", {}, local=True)
+    config = json.loads((job.directory / "config.json").read_text())
+    assert config["chat_template"] == str(job.directory / "chat_template.jinja")
+    assert "'</think>' in content" in (job.directory / "chat_template.jinja").read_text()
+    with patch("raft.hf_finetune.fetch_chat_template", return_value=QWEN38_STYLE):
+        install_thinking_template(job.directory, "test/model", local=False)
+    assert json.loads((job.directory / "config.json").read_text())["chat_template"] == "/opbdh-run/user/chat_template.jinja"
+    # a model whose template already handles the block needs nothing shipped
+    with patch("raft.hf_finetune.fetch_chat_template", return_value="{% if '</think>' in content %}{% endif %}"):
+        assert install_thinking_template(job.directory, "test/model", local=True) is None
