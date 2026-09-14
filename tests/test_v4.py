@@ -168,6 +168,10 @@ def test_recall_must_cite_the_material():
     assert grounded_recall(edited, DOC) == "I said latency grows."
     invented = "SOURCE: LLMs sample high-probability responses from their training data.\nRECALL: I've argued that LLMs mode-collapse."
     assert grounded_recall(invented, DOC) == ""
+    two = ("SOURCE: Bigger neural nets ought to have higher inference latency in general.\nRECALL: Latency grows with size.\n"
+           "SOURCE: LLMs sample high-probability responses.\nRECALL: I said LLMs mode-collapse.\n"
+           "SOURCE: regardless of pipelining. Other stuff.\nRECALL: Pipelining does not save you.")
+    assert grounded_recall(two, DOC) == "Latency grows with size. Pipelining does not save you."
 
 
 def test_summaries_go_through_the_grounding_check(project):

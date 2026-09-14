@@ -47,29 +47,32 @@ def _words(text: str) -> List[str]:
 
 def grounded_recall(summary: str, document: str) -> str:
     """
-    The RECALL of a SOURCE/RECALL reply, if its SOURCE really is in the
-    document (most of its words, in a row, allowing for punctuation and
-    small edits); "" for a skip, an unstructured reply, or a citation the
-    material does not contain -- the mark of an invented recollection.
+    The RECALL parts of a SOURCE/RECALL reply whose SOURCE really is in
+    the document (most of its words, in a row, allowing for punctuation
+    and small edits); "" for a skip, an unstructured reply, or citations
+    the material does not contain -- the mark of an invented recollection.
+    A reply may carry several pairs; each is checked on its own.
     """
     if re.match(r"^\W*skip\b", summary, re.IGNORECASE):
         return ""
-    match = re.search(r"SOURCE:\s*(.+?)\s*RECALL:\s*(.+)", summary, re.DOTALL | re.IGNORECASE)
-    if not match:
-        return ""
-    source, recall = match.group(1).strip().strip("\"'“”"), match.group(2).strip()
-    cited, haystack = _words(source), _words(document)
-    if len(cited) < 4 or not recall:
-        return ""
-    # Longest run of the citation's words found in order in the document.
-    text = " " + " ".join(haystack) + " "
-    best = 0
-    for start in range(len(cited)):
-        for end in range(len(cited), start + best, -1):
-            if f" {' '.join(cited[start:end])} " in text:
-                best = max(best, end - start)
-                break
-    return recall if best >= max(4, int(0.6 * len(cited))) else ""
+    pairs = re.findall(r"SOURCE:\s*(.+?)\s*RECALL:\s*(.+?)(?=\s*SOURCE:|\Z)", summary, re.DOTALL | re.IGNORECASE)
+    haystack = " " + " ".join(_words(document)) + " "
+    kept = []
+    for source, recall in pairs:
+        cited = _words(source.strip().strip("\"'“”"))
+        recall = " ".join(recall.split())
+        if len(cited) < 4 or not recall:
+            continue
+        # Longest run of the citation's words found in order in the document.
+        best = 0
+        for start in range(len(cited)):
+            for end in range(len(cited), start + best, -1):
+                if f" {' '.join(cited[start:end])} " in haystack:
+                    best = max(best, end - start)
+                    break
+        if best >= max(4, int(0.6 * len(cited))):
+            kept.append(recall)
+    return " ".join(kept)
 
 
 class MemoryManager:
