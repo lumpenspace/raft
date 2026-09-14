@@ -35,6 +35,8 @@ The following actions are available:
 - bench:setup: Setup the benchmark for the blog.
 - ask: Ask a question about the blog content.
 - serve: Chat with the finetuned persona, retrieval-augmented.
+- comment: Have the persona comment on a post (--source <url|file>, or --web <port>).
+  Needs RAFT_MLX_MODEL (an MLX-converted persona) or OPENAI_BASE_URL + --model.
 
 ft:run routes by --model: OpenAI-finetunable ids go to the OpenAI API,
 anything else (an org/name huggingface id) is trained via opbdh -- on a
@@ -56,6 +58,7 @@ cmds = [
     "bench:setup",
     "ask",
     "serve",
+    "comment",
 ]
 
 
@@ -125,6 +128,17 @@ def main() -> None:
         action="store_true",
         help="ft:gen: judge every reasoning trace in the generic file against its reply, "
         "rewrite the failures (no retrieval), then rebuild the chat file.",
+    )
+    parser.add_argument(
+        "--source",
+        default="",
+        help="comment: the post -- a URL (LessWrong, EA Forum, any page) or a text file.",
+    )
+    parser.add_argument(
+        "--web",
+        type=int,
+        default=0,
+        help="comment: serve a page on this port instead of commenting once.",
     )
     parser.add_argument(
         "--rewrite-traces",
@@ -226,6 +240,10 @@ def main() -> None:
         from .serve import run_serve
 
         run_serve(dataset, model=args.model)
+    elif args.action == "comment":
+        from .comment import run_comment
+
+        run_comment(dataset, source=args.source, model=args.model, web=args.web)
     elif args.action == "ask":
         if args.question is None:
             print("Please provide a question using the --question argument.")

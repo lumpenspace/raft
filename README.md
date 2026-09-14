@@ -54,6 +54,14 @@ RAFT rethought for thinking models — the reasoning is in
   sentence of the material it comes from, or it is dropped: retrieval always
   returns *something*, and a small summariser will otherwise invent what the
   persona "argued" in a document that says nothing of the kind.
+- **`raft comment`** (2.9). Hand the persona a post — `--source` a URL
+  (LessWrong, EA Forum, any page) or a text file — and get its comment: recall
+  from the store, the think block opened with that recall exactly as in
+  training, then the model's own reasoning and reply. Runs the MLX-converted
+  persona in-process (`RAFT_MLX_MODEL`) or an OpenAI-compatible
+  `/v1/completions` endpoint with the same prefilled prompt. `--web 8090`
+  serves a page that does the same; recall lines the model invents while
+  thinking are flagged, never shown as memories.
 - **Three roles, three endpoints.** The persona model answers through
   `OPENAI_BASE_URL`; the helper LLM that writes summaries and reasoning traces
   can sit elsewhere (`RAFT_LLM_BASE_URL`, `RAFT_LLM_MODEL`, and

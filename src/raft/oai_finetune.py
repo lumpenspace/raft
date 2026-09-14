@@ -39,18 +39,23 @@ def count_tokens(prompt: object) -> int:
     return len(encoding.encode(json.dumps(prompt), disallowed_special=()))
 
 
+def recall_text(memories: str) -> str:
+    """How a think block opens: what came to mind, or that nothing did."""
+    memories = (memories or "").strip()
+    return (
+        f"Recalling what I have written before:\n{memories}"
+        if memories
+        else "Nothing I have written before bears on this directly."
+    )
+
+
 def think_block(example: Dict[str, Any]) -> str:
     """
     The persona's thinking before a reply: first the recall (the retrieved
     first-person summaries of earlier writing and conversations), then the
     reasoning from that recall to the reply.
     """
-    memories = (example.get("similar_memories") or "").strip()
-    recall = (
-        f"Recalling what I have written before:\n{memories}"
-        if memories
-        else "Nothing I have written before bears on this directly."
-    )
+    recall = recall_text(example.get("similar_memories") or "")
     reasoning = (example.get("reasoning") or "").strip()
     body = f"{recall}\n\n{reasoning}" if reasoning else recall
     return f"<think>\n{body}\n</think>\n\n"
