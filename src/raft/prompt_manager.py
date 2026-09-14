@@ -35,18 +35,34 @@ def helper_client() -> OpenAI:
     )
 
 
+_MARKERS = r"^[\s\-*#>\d.)(]*"  # list bullets, numbering, markdown emphasis before a label
+
+
 def _answer(text: str, key: str) -> str:
-    match = re.search(rf"^\W*{key}\W*:\s*\**\s*(yes|no)", text, re.IGNORECASE | re.MULTILINE)
+    match = re.search(_MARKERS + rf"\**{key}\**\s*[:\-]\s*\**\s*(yes|no)\b", text, re.IGNORECASE | re.MULTILINE)
     return match.group(1).lower() if match else ""
 
 
+NO_VERDICT = "no verdict"
+
+
 def parse_verdict(text: str) -> Tuple[bool, str]:
-    """(passed, reason) from a LEADS / PARAPHRASE / LEANS / WHY checklist reply."""
+    """
+    (passed, reason) from a LEADS / PARAPHRASE / LEANS / WHY checklist
+    reply. A reply the judge failed to format is reported as passed with
+    the reason NO_VERDICT: the caller keeps the trace rather than treat a
+    formatting slip as a rejection.
+    """
     leads, paraphrase, leans = _answer(text, "LEADS"), _answer(text, "PARAPHRASE"), _answer(text, "LEANS")
-    why = re.search(r"^\W*WHY\W*:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
+    why = re.search(_MARKERS + r"\**WHY\**\s*:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
     reason = " ".join(why.group(1).split()) if why else " ".join(text.split())[:200]
-    if not leads:  # no checklist: fall back to a bare PASS/FAIL if there is one
-        return text.strip().upper().startswith("PASS"), reason
+    if not (leads and paraphrase and leans):
+        # A bare verdict somewhere in the first line still counts.
+        first = text.strip().splitlines()[0] if text.strip() else ""
+        bare = re.findall(r"\b(PASS|FAIL)\b", first, re.IGNORECASE)
+        if bare:
+            return bare[-1].upper() == "PASS", reason or "the judge gave no reason"
+        return True, NO_VERDICT
     problems = []
     if leads == "no":
         problems.append("it does not lead to the reply")
@@ -56,7 +72,7 @@ def parse_verdict(text: str) -> Tuple[bool, str]:
         problems.append("it leans on the recollection more than the reply does")
     if problems:
         return False, f"{'; '.join(problems)} ({reason})" if why else "; ".join(problems)
-    return True, reason
+    return True, reason or "passed"
 
 
 class PromptManager:
@@ -152,7 +168,8 @@ class PromptManager:
         return str(response.choices[0].message.content).strip()
 
     def reasoning_trace(
-        self, question: str, answer: str, memories: str, prev_answer: str, author: str, objection: str = ""
+        self, question: str, answer: str, memories: str, prev_answer: str, author: str,
+        objection: str = "", rejected: str = "",
     ) -> str:
         """
         For thinking models: the private reasoning that leads from the
@@ -161,10 +178,13 @@ class PromptManager:
         target's position rather than the writer's; the recollection is
         drawn on only as far as the reply itself does, never forced in.
         """
-        retry = (
-            f"\n\nA previous attempt was rejected: {objection} Write it again so that it leads to the reply."
-            if objection else ""
-        )
+        retry = ""
+        if objection:
+            shown = f"\n\nThe rejected attempt:\n{rejected}" if rejected else ""
+            retry = (
+                f"\n\n---\nA previous attempt was rejected: {objection}{shown}\n\n"
+                "Write it again so that it leads to the reply."
+            )
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
                 role="system",
@@ -198,7 +218,9 @@ class PromptManager:
         response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
         return str(response.choices[0].message.content).strip()
 
-    def check_trace(self, question: str, memories: str, reasoning: str, answer: str, author: str) -> Tuple[bool, str]:
+    def check_trace(
+        self, question: str, memories: str, reasoning: str, answer: str, author: str, prev_answer: str = ""
+    ) -> Tuple[bool, str]:
         """
         Judge a reasoning trace against the reply it is meant to lead to,
         one criterion at a time (a checklist keeps a mid-size judge honest).
@@ -226,12 +248,14 @@ class PromptManager:
             ChatCompletionUserMessageParam(
                 role="user",
                 content=(
-                    f"Question: {question}\n\nWhat came to mind:\n{memories or '(nothing specific)'}\n\n"
+                    f"Question: {question}\n\n"
+                    f"Their previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
+                    f"What came to mind:\n{memories or '(nothing specific)'}\n\n"
                     f"Reasoning:\n{reasoning}\n\nReply actually given:\n{answer}"
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
+        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages, temperature=0)
         return parse_verdict(str(response.choices[0].message.content or ""))
 
     def contextualise_memories_for_prompt(

@@ -16,7 +16,7 @@ from openai.types.chat import (
 )
 
 from . import hx
-from .prompt_manager import PromptManager
+from .prompt_manager import NO_VERDICT, PromptManager
 from .embeddings_helpers import get_embedding, store_exchange_embedding
 from .sources import date_num
 from .project import DatasetLike, dataset_paths
@@ -297,15 +297,20 @@ class MemoryManager:
     # One write plus this many rewrites before a trace is given up on.
     TRACE_REWRITES = 2
     # A trace that describes the exchange from outside is not thinking; caught
-    # before the judge is asked.
+    # before the judge is asked (the judge decides on the last attempt).
     NARRATION = re.compile(
-        r"\b(the (commenter|questioner|poster|user|interlocutor)|my (reply|response)|"
+        r"\b(the (commenter|questioner|poster|user|interlocutor)|"
         r"the (original|current) (claim|reaction|post|comment|question|query)|"
         r"the question (tackles|raises|challenges|asks)|the recalled|the recollection reminded)\b",
         re.IGNORECASE,
     )
-    # Shared tally, reported at the end of a generation run.
-    trace_stats: Dict[str, int] = {"passed": 0, "rewritten": 0, "dropped": 0}
+    # Tally of the current run; reset by the callers that report it.
+    trace_stats: Dict[str, int] = {"passed": 0, "rewritten": 0, "dropped": 0, "unjudged": 0}
+
+    @classmethod
+    def reset_trace_stats(cls) -> None:
+        for key in cls.trace_stats:
+            cls.trace_stats[key] = 0
 
     def reasoning_trace(
         self, question: str, answer: str, memories: str, prev_answer: str, existing: str = ""
@@ -315,24 +320,48 @@ class MemoryManager:
         to the real reply -- judged against the reply, rewritten with the
         objection when it fails, and dropped (recall only) when it still
         fails. An `existing` trace is judged first and kept if it passes.
+        A helper failure counts as a rejection; it never ends the run.
         """
-        objection = ""
+        objection = rejected = ""
         trace = existing
-        for attempt in range(self.TRACE_REWRITES + 1 + (1 if existing else 0)):
+        attempts = self.TRACE_REWRITES + 1 + (1 if existing else 0)
+        for attempt in range(attempts):
             if not trace:
-                trace = self.prompt_manager.reasoning_trace(
-                    question, answer, memories, prev_answer, author=self.name, objection=objection
-                )
+                try:
+                    trace = self.prompt_manager.reasoning_trace(
+                        question, answer, memories, prev_answer, author=self.name,
+                        objection=objection, rejected=rejected if objection else "",
+                    )
+                except Exception as e:  # noqa: BLE001 -- one lost call must not end a long run
+                    hx.warn(f"reasoning trace call failed: {e}")
+                    trace = ""
+                if not trace.strip():
+                    objection, rejected = "the writer returned nothing", ""
+                    continue
             narrated = self.NARRATION.search(trace)
-            if narrated:
-                passed, why = False, f"it narrates the exchange from outside ('{narrated.group(0)}'); think in the first person, in the moment"
+            last = attempt == attempts - 1
+            if narrated and not last:
+                passed, why = False, (
+                    f"it narrates the exchange from outside ('{narrated.group(0)}'); "
+                    "think in the first person, in the moment"
+                )
             else:
-                passed, why = self.prompt_manager.check_trace(question, memories, trace, answer, author=self.name)
+                try:
+                    passed, why = self.prompt_manager.check_trace(
+                        question, memories, trace, answer, author=self.name, prev_answer=prev_answer
+                    )
+                except Exception as e:  # noqa: BLE001
+                    hx.warn(f"trace judge call failed: {e}")
+                    passed, why = False, "the judge could not be reached"
             if passed:
-                self.trace_stats["rewritten" if objection else "passed"] += 1
+                if why == NO_VERDICT:
+                    self.trace_stats["unjudged"] += 1
+                    hx.warn("the judge gave no verdict; keeping the trace")
+                else:
+                    self.trace_stats["rewritten" if attempt else "passed"] += 1
                 return trace
-            objection = why
-            hx.say(f"reasoning trace rejected ({why[:120]}); rewriting")
+            objection, rejected = why or "the judge rejected it", trace
+            hx.say(f"reasoning trace rejected ({objection[:120]}); rewriting")
             trace = ""
         self.trace_stats["dropped"] += 1
         hx.warn("no reasoning trace led to the reply; keeping the recall only")

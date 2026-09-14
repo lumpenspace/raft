@@ -125,6 +125,11 @@ def main() -> None:
         help="ft:gen: judge every reasoning trace in the generic file against its reply, "
         "rewrite the failures (no retrieval), then rebuild the chat file.",
     )
+    parser.add_argument(
+        "--rewrite-traces",
+        action="store_true",
+        help="ft:gen: like --recheck-traces, but write every trace afresh first (a new writer model, say).",
+    )
 
     args, extra = parser.parse_known_args()
 
@@ -163,9 +168,9 @@ def main() -> None:
     elif args.action == "embed":
         embeddings_helpers.store_grounding_embeddings(dataset)
     elif args.action == "ft:gen":
-        thinking = _thinking_mode(dataset, args.thinking)
-        if args.recheck_traces:
-            generate_finetune.recheck_traces(dataset)
+        thinking = _thinking_mode(dataset, args.thinking or args.recheck_traces or args.rewrite_traces)
+        if args.recheck_traces or args.rewrite_traces:
+            generate_finetune.recheck_traces(dataset, regenerate="all" if args.rewrite_traces else "recall")
             if not args.generic:
                 oai_finetune.create_openai_finetune_file(dataset, thinking=True)
         elif args.oai:
