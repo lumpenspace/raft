@@ -224,3 +224,52 @@ def test_reply_context_comes_from_the_parent():
     assert record["content"].startswith("Replying to A (A long parent")
     assert "[...]" in record["content"] and record["content"].endswith("):\n\nMy answer.")
     assert len(record["content"]) < 400
+
+
+def test_cli_imports_without_prompts_and_adopts_the_target(project, monkeypatch):
+    from raft import cli
+
+    monkeypatch.chdir(project.root)
+    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "T", "--forum", "https://lw", "--conversations", "1"])
+    cli.main()
+    assert state.load_meta(project)["target"] == "T"
+    assert state.dataset_status(project)["transcripts"] == 1
+    # the comments beyond the conversations are grounding unless --no-older-comments
+    assert any(d["title"].startswith("comment on") for d in read_jsonl(project.corpus_path))
+
+
+def test_cli_flags_reach_the_importer(project, monkeypatch):
+    from raft import cli
+
+    monkeypatch.chdir(project.root)
+    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "T", "--forum", "EA Forum", "--conversations", "0",
+                                     "--min-karma", "3", "--role", "conversation", "--no-older-comments"])
+    with patch("raft.lesswrong.import_lesswrong", return_value={}) as importer:
+        cli.main()
+    assert importer.call_args.args[1:] == ("https://forum.effectivealtruism.org", "T")
+    assert importer.call_args.kwargs == {"role": "conversation", "max_conversations": None, "min_karma": 3,
+                                         "forum_name": "EA Forum", "older_comments_as_grounding": False}
+
+
+def test_cli_unknown_forum_or_user_is_a_usage_error(project, monkeypatch, capsys):
+    from raft import cli
+
+    monkeypatch.chdir(project.root)
+    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "T", "--forum", "reddit"])
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "unknown forum" in capsys.readouterr().err
+    monkeypatch.setattr("sys.argv", ["raft", "lesswrong", "--user", "nobody", "--forum", "https://lw"])
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "no user" in capsys.readouterr().err
+
+
+def test_resolve_forum_names_and_urls():
+    assert lesswrong.resolve_forum("lesswrong") == ("LessWrong", "https://www.lesswrong.com")
+    assert lesswrong.resolve_forum("LW") == ("LessWrong", "https://www.lesswrong.com")
+    assert lesswrong.resolve_forum("https://www.lesswrong.com/") == ("LessWrong", "https://www.lesswrong.com")
+    assert lesswrong.resolve_forum("eaforum") == ("EA Forum", "https://forum.effectivealtruism.org")
+    assert lesswrong.resolve_forum("https://forum.example.org") == ("forum.example.org", "https://forum.example.org")
+    with pytest.raises(ValueError, match="unknown forum"):
+        lesswrong.resolve_forum("reddit")

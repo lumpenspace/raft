@@ -28,7 +28,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import requests
 
-from . import hx
+from . import hx, state
 from .convo_structurer import messages_to_exchanges, write_transcript
 from .interactive import ask, choose, confirm
 from .project import DatasetLike, dataset_paths
@@ -38,6 +38,11 @@ FORUMS = [
     ("LessWrong (also covers the Alignment Forum)", "https://www.lesswrong.com"),
     ("EA Forum", "https://forum.effectivealtruism.org"),
 ]
+# `--forum` spellings, letters and digits only, for the two known forums.
+FORUM_NAMES = {
+    "lesswrong": 0, "lw": 0, "alignmentforum": 0, "af": 0,
+    "eaforum": 1, "ea": 1, "effectivealtruism": 1, "effectivealtruismforum": 1,
+}
 
 PAGE_SIZE = 500
 BATCH_SIZE = 40
@@ -418,6 +423,9 @@ def import_lesswrong(
     user = resolve_user(base_url, handle)
     target_name = user.get("displayName") or user.get("username") or handle
     hx.say(f"{target_name}: {user.get('postCount', '?')} post(s), {user.get('commentCount', '?')} comment(s)")
+    if not state.load_meta(paths).get("target"):
+        # A dataset that does not know who it emulates yet adopts the forum name.
+        state.update_meta(paths, target=target_name)
     summary = {"documents": 0, "exchanges": 0, "transcripts": 0}
     want_threads = role in ("auto", "conversation")
 
@@ -478,6 +486,38 @@ def import_lesswrong(
         f"in {summary['transcripts']} conversation(s) from {forum_name}"
     )
     return summary
+
+
+def resolve_forum(forum: str) -> Tuple[str, str]:
+    """A forum name (lesswrong, eaforum) or a ForumMagnum base URL -> (display name, base URL)."""
+    key = "".join(ch for ch in forum.lower() if ch.isalnum())
+    if key in FORUM_NAMES:
+        name, base_url = FORUMS[FORUM_NAMES[key]]
+        return name.split(" (")[0], base_url
+    if forum.startswith(("http://", "https://")):
+        base_url = forum.rstrip("/")
+        for name, known in FORUMS:
+            if known == base_url:
+                return name.split(" (")[0], base_url
+        return base_url.split("//", 1)[1], base_url
+    raise ValueError(f"unknown forum {forum!r}: lesswrong, eaforum, or a ForumMagnum base URL")
+
+
+def run_lesswrong_cli(
+    dataset: DatasetLike,
+    handle: str,
+    forum: str = "lesswrong",
+    max_conversations: Optional[int] = 200,
+    min_karma: Optional[int] = None,
+    role: str = "auto",
+    older_comments_as_grounding: bool = True,
+) -> Dict[str, int]:
+    """`raft lesswrong --user <handle>`: the import without prompts (0 conversations = every thread)."""
+    forum_name, base_url = resolve_forum(forum)
+    return import_lesswrong(
+        dataset, base_url, handle, role=role, max_conversations=max_conversations or None, min_karma=min_karma,
+        forum_name=forum_name, older_comments_as_grounding=older_comments_as_grounding,
+    )
 
 
 def run_lesswrong_source(dataset: DatasetLike, target: str, role: str = "auto") -> Dict[str, int]:

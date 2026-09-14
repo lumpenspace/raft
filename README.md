@@ -21,6 +21,25 @@ ok then, a friend asked so now it is more lenient with the version number and us
 
 (2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
 
+## 3.0
+
+The first release on PyPI since 2.6 (`pip install -U raft-ft`), so it also
+ships 2.7, 2.8 and 2.9 below. New in 3.0 itself:
+
+- **`raft lesswrong`** — the LessWrong / EA Forum import as one command, no
+  wizard. `raft lesswrong --user gwern --conversations 200` takes the 200
+  newest comment threads as dated conversations and the posts, quick takes and
+  every older comment as grounding, and adopts the forum display name as the
+  project's target. `--forum eaforum` (or any ForumMagnum base URL),
+  `--role corpus|conversation`, `--min-karma`, `--no-older-comments`;
+  `--conversations 0` takes every thread. Without `--user` it asks, as the
+  wizard does.
+- **An example persona: gwern.**
+  [examples/gwern](https://github.com/lumpenspace/raft/tree/main/examples/gwern)
+  bootstraps a project from LessWrong alone — one script, no API key for the
+  import — and records the prep and training recipe behind the served
+  persona (a Qwen3.8-27B QLoRA: two H100s, about twelve minutes).
+
 ## 2.8
 
 RAFT rethought for thinking models — the reasoning is in
@@ -265,8 +284,8 @@ The interview transcripts used within a RAG-inspired process retreiving "memorie
 
 The steps to reproduce this process are as follows:
 
-1. Create a dataset of interview transcripts featuring the target human. Each interview is a separate `data/{name}_transcript_{i}.json` file holding `{"participants": {"q": ..., "a": ...}, "date": ..., "url": ..., "exchanges": [[question, answer], ...]}`. As of 2.0 you don't have to write these by hand: `raft interactive` takes chat-message JSON, ariadne output or plain unstructured transcripts and produces them for you.
-2. Create a dataset of the author's past written output — `data/{name}.jsonl`, one `{"title", "link", "date", "content"}` object per line. `raft fetch` builds this from a substack; `raft tweets` from a tweet archive; `raft interactive` from arbitrary local files.
+1. Create a dataset of interview transcripts featuring the target human. Each interview is a separate `data/{name}_transcript_{i}.json` file holding `{"participants": {"q": ..., "a": ...}, "date": ..., "url": ..., "exchanges": [[question, answer], ...]}`. As of 2.0 you don't have to write these by hand: `raft interactive` takes chat-message JSON, ariadne output or plain unstructured transcripts and produces them for you, and `raft lesswrong` turns a forum user's comment threads into dated ones.
+2. Create a dataset of the author's past written output — `data/{name}.jsonl`, one `{"title", "link", "date", "content"}` object per line. `raft fetch` builds this from a substack; `raft tweets` from a tweet archive; `raft lesswrong` from a forum user's posts and comments; `raft interactive` from arbitrary local files.
 3. Split the past output dataset in chunks of a size suitable for the chosen embedding model (8192 tokens for Openai's text-embedding-ada-002), and collect metadata and embeddings for each chunk.
 4. Store the resulting metadata and embeddings in a vector database (we use ChromaDB).
 
@@ -291,17 +310,16 @@ The fine-tuned model is then used to generate responses to the interviewer's que
 ### Installation
 
 The distribution is named `raft-ft` (`raft` was taken on PyPI); the import and the
-CLI are still `raft`. Until the first `raft-ft` release lands on PyPI, install from
-git:
+CLI are still `raft`:
+
+```bash
+pip install -U raft-ft
+```
+
+The development head installs from git:
 
 ```bash
 pip install git+https://github.com/lumpenspace/raft
-```
-
-Once released:
-
-```bash
-pip install raft-ft
 ```
 
 For development, [uv](https://docs.astral.sh/uv/) manages the environment:
@@ -322,16 +340,21 @@ raft -h
 
 The following actions are available:
 
-- interactive: Guided end-to-end session: sources, conversations, finetune.
+- init: Initialize a persona project in the current or specified directory.
+- interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - tweets: Build a dataset from tweets via ariadne interactive.
+- lesswrong: Import a LessWrong / EA Forum user: --user <handle> (--forum, --conversations,
+  --min-karma, --role auto|corpus|conversation, --no-older-comments). Asks without --user.
 - fetch: Fetch the blog from Substack and store it in the data directory.
-- chunk: Chunk the blog into 4096 token pieces and store them in the data directory.
+- chunk: Chunk the blog into 4096 token pieces and store them in /data.
 - embed: Create embeddings for the chunks and store them.
-- ft:gen: Generate finetune files for the blog.
+- ft:gen: Generate finetune files for the blog (--thinking for reasoning models).
 - ft:run: Run the finetune job (OpenAI, or huggingface via opbdh).
 - bench:setup: Setup the benchmark for the blog.
 - ask: Ask a question about the blog content.
 - serve: Chat with the finetuned persona, retrieval-augmented.
+- comment: Have the persona comment on a post (--source <url|file>, or --web <port>).
+  Needs RAFT_MLX_MODEL (an MLX-converted persona) or OPENAI_BASE_URL + --model.
 ```
 
 ## Licence
