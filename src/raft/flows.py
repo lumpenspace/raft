@@ -2,14 +2,16 @@
 `raft interactive`: guided end-to-end session, in five phases.
 
 1. gather -- collect documents (substack / RSS / URLs / PDFs / local
-   files) and conversations (dumps, chat logs, tweets via ariadne), one
-   source at a time, combined into one dataset.
+   files / LessWrong posts) and conversations (dumps, chat logs, tweets
+   via ariadne, LessWrong comment threads), one source at a time,
+   combined into one dataset.
 2. prep   -- chunk + embed the corpus, then generate the finetune
    examples, each augmented with summaries of the target's relevant
    *earlier* writings.
 3. train  -- pick the model and where it runs (the OpenAI finetuning
-   API, or a GPU pod via opbdh); collect test questions while the job
-   runs, previewing what retrieval puts in the persona's context.
+   API, a GPU pod via opbdh, or this machine's own accelerator); collect
+   test questions while the job runs, previewing what retrieval puts in
+   the persona's context.
 4. eval   -- run the benchmark and the test questions against the
    finetuned model.
 5. serve  -- talk to the persona, retrieval-augmented.
@@ -34,6 +36,7 @@ from . import embeddings_helpers, files_helper, generate_finetune, hx, oai_finet
 from . import serve, sources, state, substack_embeddings
 from .convo_structurer import import_conversation_file, import_text_source_file
 from .hf_finetune import (
+    default_local_target,
     is_openai_finetunable,
     load_opbdh,
     pick_model_interactively,
@@ -177,8 +180,15 @@ def add_substack(name: str) -> None:
 SOURCE_KINDS = [
     "tweets (X / Bluesky)", "Substack", "blog / RSS / Atom feed",
     "web page / interview URL", "PDF files", "local text / JSONL files",
-    "conversation files / chat logs",
+    "conversation files / chat logs", "LessWrong / EA Forum (posts + comments)",
 ]
+TWEETS, LESSWRONG = 0, 7
+
+# Sources that can feed both destinations at once, and how.
+SPLIT_ROLES = {
+    TWEETS: "both, split replies into conversations and other posts into grounding",
+    LESSWRONG: "both: posts and quick takes as grounding, comment threads as conversations",
+}
 
 
 def plan_sources() -> list[dict]:
@@ -191,9 +201,10 @@ def plan_sources() -> list[dict]:
         if kind == len(SOURCE_KINDS):
             return plan
         roles = ["conversations", "grounding documents"]
-        if kind == 0:
-            roles.append("both, split replies into conversations and other posts into grounding")
-        role = choose(f"Use {SOURCE_KINDS[kind]} for", roles, default=0 if kind in (0, 6) else 1)
+        if kind in SPLIT_ROLES:
+            roles.append(SPLIT_ROLES[kind])
+        default = 2 if kind == LESSWRONG else 0 if kind in (TWEETS, 6) else 1
+        role = choose(f"Use {SOURCE_KINDS[kind]} for", roles, default=default)
         plan.append({"kind": kind, "role": ["conversation", "corpus", "auto"][role]})
         hx.say(f"Added {SOURCE_KINDS[kind]}: {roles[role]}")
 
@@ -201,9 +212,13 @@ def plan_sources() -> list[dict]:
 def import_planned_source(name: DatasetLike, target: str, item: dict) -> None:
     """Route a source only to its selected destination."""
     kind, role = item["kind"], item["role"]
-    if kind == 0:
+    if kind == TWEETS:
         from .tweet_mode import run_tweet_mode
         run_tweet_mode(name, target, standalone=False, role=role)
+        return
+    if kind == LESSWRONG:
+        from .lesswrong import run_lesswrong_source
+        run_lesswrong_source(name, target, role=role)
         return
     if kind in (5, 6) and role == "conversation":
         gather_conversations(name, target)
@@ -341,6 +356,7 @@ def phase_train(name: str) -> None:
         [
             "OpenAI finetuning API (hosted; gpt-4o-mini and friends)",
             "a GPU via opbdh (RunPod / Prime Intellect multi-cloud)",
+            "this machine's accelerator via opbdh (Apple Silicon / CUDA)",
         ],
         default=0,
     )
@@ -369,7 +385,7 @@ def phase_train(name: str) -> None:
         except (EOFError, KeyboardInterrupt):
             hx.warn("question collection interrupted; the job keeps running")
         _wait_and_record(name, job_id)
-    else:
+    elif venue == 1:
         opbdh = load_opbdh()
         model = pick_model_interactively(opbdh)
         collect_test_questions(name, "before the pod spins up")
@@ -378,6 +394,16 @@ def phase_train(name: str) -> None:
         ):
             return
         adapter = run_hf_finetune(name, model, interactive=True)
+        if adapter:
+            state.record_finetuned_model(name, adapter, "hf")
+    else:
+        opbdh = load_opbdh()
+        target = default_local_target(opbdh)
+        model = pick_model_interactively(opbdh)
+        collect_test_questions(name, "before training starts")
+        if not confirm(f"Start the {model} finetune on this machine ({target}) now?", default=True):
+            return
+        adapter = run_hf_finetune(name, model, opbdh_args=["--target", target], interactive=True)
         if adapter:
             state.record_finetuned_model(name, adapter, "hf")
 

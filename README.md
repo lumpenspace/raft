@@ -21,6 +21,43 @@ ok then, a friend asked so now it is more lenient with the version number and us
 
 (2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
 
+## 2.7
+
+**LessWrong as a source.** The gather phase of `raft interactive` can now draw
+on any ForumMagnum forum — LessWrong (which also covers the Alignment Forum),
+the EA Forum, or another site by URL — through its public GraphQL API, no key
+needed. Name the user and choose what the forum feeds: posts (and quick takes)
+become grounding documents, comment threads become conversations, or both.
+For each comment by the target, whatever it replied to is the questioner's
+side — the post's title, author and opening for a top-level comment, the chain
+of parent comments otherwise — and the target's comment is the answer. A
+branch where the target and an interlocutor go back and forth becomes one
+multi-turn exchange, and every comment by the target is an answer exactly
+once. Top-level comments on the target's own posts are the target talking to
+themselves and go to grounding instead. The importer works newest first and
+stops once it has the number of conversations you asked for (default 200),
+optionally skipping comments below a karma threshold.
+
+**Training on your own Mac (or CUDA box).** `raft ft:run --model <org/name>
+--target mps` (or `--target cuda`) trains the same native opbdh recipe on this
+machine's accelerator through opbdh's local execution (opbdh ≥ 1.8: a free-
+memory check first, `OPBDH_DEVICE` set for the runner) instead of renting a
+pod; the train phase of `raft interactive` offers it as a third venue. The
+runner needs the training stack in this environment: `pip install
+'raft-ft[local]'`. On Apple Silicon it trains LoRA in fp32 (QLoRA is
+CUDA-only), so budget about twice the VRAM estimate. A project directory is
+self-contained, so the way to use the big Mac down the hall is to rsync the
+project there and run `raft ft:run` on it.
+
+**One endpoint for the prep phase.** The embedding model and the memory
+summarizer's model are configurable: `RAFT_EMBEDDING_MODEL` (default
+`text-embedding-ada-002`) and `RAFT_LLM_MODEL` (default `gpt-4o`, which the
+conversation structurer already used; the summarizer used to hardcode
+`gpt-4`). Together with `OPENAI_BASE_URL` this points the whole prep at any
+OpenAI-compatible server — ollama with `nomic-embed-text` and a local chat
+model, say — so building a dataset needs no OpenAI account. Keep one
+embedding model per collection: vectors only compare within it.
+
 ## 2.5
 
 Start a persona project with `raft init my-persona`, then `cd my-persona`
@@ -28,7 +65,8 @@ and `raft interactive`. Commands inside the project no longer need a dataset
 name. Existing `raft <action> <name>` datasets still work.
 
 At the beginning, select all the sources you have: tweets (X / Bluesky),
-Substack, blogs / RSS, web pages, PDFs, local files, or chat logs. You can
+Substack, blogs / RSS, web pages, PDFs, local files, chat logs, or LessWrong
+(2.7). You can
 select multiple sources, including several of the same kind. For each, choose
 **conversations** or **grounding documents** before importing. Tweets also
 support an automatic split: replies become conversations and other posts become
@@ -110,6 +148,13 @@ New major version. Substack is no longer the only way in:
   pip install -U 'raft-ft[hf]'
   opbdh config wizard
   raft ft:run garymarcus --model Qwen/Qwen2.5-7B-Instruct --provider primeintellect --method qlora --max-spend 5
+  ```
+
+  Or, since 2.7, on this machine's own accelerator instead of a pod:
+
+  ```bash
+  pip install -U 'raft-ft[local]'
+  raft ft:run garymarcus --model Qwen/Qwen2.5-7B-Instruct --target mps --epochs 1
   ```
 
   Native recipe options include `--epochs`, `--learning-rate`, `--max-length`,
@@ -233,6 +278,7 @@ The following actions are available:
 - ft:run: Run the finetune job (OpenAI, or huggingface via opbdh).
 - bench:setup: Setup the benchmark for the blog.
 - ask: Ask a question about the blog content.
+- serve: Chat with the finetuned persona, retrieval-augmented.
 ```
 
 ## Licence

@@ -3,12 +3,19 @@ This module provides helper functions for working with embeddings.
 """
 
 import json
+import os
 from typing import Dict, Any, List
 from chromadb import PersistentClient
 from openai import OpenAI
 
 from .sources import date_num
 from .project import DatasetLike, dataset_paths
+
+# Any model behind an OpenAI-compatible endpoint works (OPENAI_BASE_URL
+# pointed at ollama, say, with RAFT_EMBEDDING_MODEL=nomic-embed-text);
+# one collection must keep one model, since vectors are only comparable
+# within it.
+EMBEDDING_MODEL = os.environ.get("RAFT_EMBEDDING_MODEL", "text-embedding-ada-002")
 
 _client = None
 
@@ -31,7 +38,7 @@ def get_embedding(text: str) -> List[float]:
         List[float]: The embedding vector.
     """
     embedding_object = _get_client().embeddings.create(
-        input=text, model="text-embedding-ada-002"
+        input=text, model=EMBEDDING_MODEL
     )
     embedding_vector = embedding_object.data[0].embedding
     return embedding_vector

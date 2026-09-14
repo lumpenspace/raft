@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List
 
 from openai import OpenAI
@@ -6,6 +7,11 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
 )
+
+
+# The memory summarizer's model: the same knob as the conversation
+# structurer, so one OpenAI-compatible endpoint serves the whole prep.
+SUMMARY_MODEL = os.environ.get("RAFT_LLM_MODEL", "gpt-4o")
 
 
 class PromptManager:
@@ -92,7 +98,7 @@ class PromptManager:
                     Memory: {memory}",
             ),
         ]
-        response = self.client.chat.completions.create(model="gpt-4", messages=messages)
+        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages)
         return str(response.choices[0].message.content).strip()
 
     def contextualise_memories_for_prompt(

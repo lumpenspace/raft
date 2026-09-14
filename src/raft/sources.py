@@ -77,6 +77,20 @@ def html_to_text(html: str) -> str:
     return BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
 
 
+def existing_links(dataset: DatasetLike) -> set:
+    """The links already in the grounding corpus (for skipping re-fetches)."""
+    corpus_path = dataset_paths(dataset).corpus_path
+    seen_links = set()
+    if corpus_path.exists():
+        with corpus_path.open() as f:
+            for line in f:
+                if line.strip():
+                    link = json.loads(line).get("link")
+                    if link:
+                        seen_links.add(link)
+    return seen_links
+
+
 def append_corpus_records(dataset: DatasetLike, records: List[Dict[str, Any]]) -> int:
     """
     Append records to data/{name}.jsonl, skipping links already there.
@@ -86,15 +100,7 @@ def append_corpus_records(dataset: DatasetLike, records: List[Dict[str, Any]]) -
     """
     corpus_path = dataset_paths(dataset).corpus_path
     corpus_path.parent.mkdir(parents=True, exist_ok=True)
-
-    seen_links = set()
-    if corpus_path.exists():
-        with corpus_path.open() as f:
-            for line in f:
-                if line.strip():
-                    link = json.loads(line).get("link")
-                    if link:
-                        seen_links.add(link)
+    seen_links = existing_links(dataset)
 
     added = 0
     with corpus_path.open("a") as f:
