@@ -154,3 +154,32 @@ def test_thinking_datasets_ship_the_template_with_the_job(dataset, tmp_path):
     # a model whose template already handles the block needs nothing shipped
     with patch("raft.hf_finetune.fetch_chat_template", return_value="{% if '</think>' in content %}{% endif %}"):
         assert install_thinking_template(job.directory, "test/model", local=True) is None
+
+
+def test_hybrid_attention_models_get_fused_kernels_on_the_pod(dataset):
+    from raft.hf_finetune import add_job_requirements
+
+    with patch("raft.hf_finetune.model_type_of", return_value="qwen3_5"):
+        _, project, job, _ = prepare_finetune("d", "Qwen/Qwen3.8-27B", {"extra_requirements": "einops,"})
+    lines = (job.directory / "requirements.txt").read_text().split()
+    assert "flash-linear-attention" in lines and "einops" in lines and lines.count("flash-linear-attention") == 1
+    with patch("raft.hf_finetune.model_type_of", return_value="qwen3_5"):
+        assert add_job_requirements(job.directory, "Qwen/Qwen3.8-27B") == []  # already there
+    with patch("raft.hf_finetune.model_type_of", return_value="llama"):
+        _, _, job, _ = prepare_finetune("d", "meta/llama", {})
+    assert "flash-linear-attention" not in (job.directory / "requirements.txt").read_text()
+    with patch("raft.hf_finetune.model_type_of", return_value="qwen3_5"):
+        _, _, job, _ = prepare_finetune("d", "Qwen/Qwen3.8-27B", {}, local=True)
+    assert "flash-linear-attention" not in (job.directory / "requirements.txt").read_text()  # local stack is its own
+
+
+def test_vram_floor_raises_the_gpu_class(dataset):
+    resources = SimpleNamespace(vram_per_gpu_gb=41, disk_gb=80, host_ram_per_gpu_gb=16)
+    with patch.object(ft, "estimate_finetune_resources", return_value=resources), \
+         patch("opbdh.launch") as launch, patch("raft.hf_finetune.model_type_of", return_value=""):
+        run_hf_finetune("d", "test/model", ["--vram-gb", "141", "--dry-run"])
+    assert launch.call_args.kwargs["vram_gb"] == 141
+    with patch.object(ft, "estimate_finetune_resources", return_value=resources), \
+         patch("opbdh.launch") as launch, patch("raft.hf_finetune.model_type_of", return_value=""):
+        run_hf_finetune("d", "test/model", ["--vram-gb", "24", "--dry-run"])
+    assert launch.call_args.kwargs["vram_gb"] == 41  # never below the estimate
