@@ -77,7 +77,9 @@ def map_line(line: str) -> Tuple[str, str, int]:
         Tuple[str, str, int]: The original or truncated line,
             decoded version, and length.
     """
-    encoded = encoding.encode(line)
+    # Text about tokenizers contains strings like <|endoftext|>; they are
+    # text here, not special tokens, and must not abort the chunking.
+    encoded = encoding.encode(line, disallowed_special=())
     if len(encoded) < MAX_EMBEDDING_LENGTH:
         return (line, encoding.decode(encoded), len(encoded))
     else:
@@ -103,7 +105,7 @@ def split_into_chunks(
     """
     for _, post in blog_posts.iterrows():
         print(f"Splitting {post['title']}")
-        lines = list(map(map_line, post["content"].split("\n")))
+        lines = list(map(map_line, str(post["content"]).split("\n")))
 
         total_parts = 0
         temp_chunk_length = 0
