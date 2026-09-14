@@ -21,6 +21,33 @@ ok then, a friend asked so now it is more lenient with the version number and us
 
 (2.1: poetry is gone — it's uv + hatchling now, like the other repos in this constellation.)
 
+## 2.8
+
+RAFT rethought for thinking models — the reasoning is in
+[docs/RAFT-2026.md](docs/RAFT-2026.md); the short version:
+
+- **Recall lives in the thinking phase.** With `raft ft:gen --thinking` (or
+  the prep phase's question) each training reply opens a `<think>` block with
+  the recalled earlier writing and conversations, continues with the
+  reasoning that leads from that recall to the reply — written after the fact
+  from the reply the target actually gave — and then gives the reply. Without
+  `--thinking`, the recall stays a system note between question and reply, as
+  before, for models without a thinking phase and the OpenAI API.
+- **One conversation, one date.** A transcript is now one conversation (a
+  thread branch, a reply chain, an interview) with its own date and setting.
+  The system prompt says who the persona is, what day it is and where the
+  conversation happens; retrieval for it is limited to writing dated strictly
+  before it. Tweet mode and the LessWrong source write one transcript per
+  thread; each exchange is one training example, with the conversation so
+  far as prior turns.
+- **Conversations are memories too.** Each exchange the pipeline processes is
+  remembered, dated, with its question and answer, so later conversations can
+  recall earlier ones. Benchmark conversations and live chat never are.
+- **2023's limits are knobs.** Examples pack up to 8192 tokens
+  (`RAFT_MAX_EXAMPLE_TOKENS`); the fixed rate-limit sleeps became `RAFT_PACE`
+  (default 0); the system prompt no longer mentions a function that will be
+  "called automatically".
+
 ## 2.7
 
 **LessWrong as a source.** The gather phase of `raft interactive` can now draw

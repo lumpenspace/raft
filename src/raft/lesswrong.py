@@ -28,7 +28,6 @@ from .convo_structurer import messages_to_exchanges, write_transcript
 from .interactive import ask, choose
 from .project import DatasetLike, dataset_paths
 from .sources import USER_AGENT, append_corpus_records, iso_date
-from .tweet_mode import EXCHANGES_PER_TRANSCRIPT
 
 FORUMS = [
     ("LessWrong (also covers the Alignment Forum)", "https://www.lesswrong.com"),
@@ -271,7 +270,10 @@ def build_conversations(
                 quick_takes.append(comment)
                 continue
             full = posts.get(comment.get("postId") or "") or post
-            groups.append({"date": date, "url": url, "exchanges": [[post_stub(full), text_of(comment)]]})
+            groups.append({
+                "date": date, "url": url, "title": post.get("title") or "", "questioner": author_of(full),
+                "exchanges": [[post_stub(full), text_of(comment)]],
+            })
             continue
 
         path = chain(comment)
@@ -291,10 +293,16 @@ def build_conversations(
             if message["role"] == "user" and message["content"]:
                 message["content"] = f'Re: "{post.get("title") or "untitled"}"\n\n{message["content"]}'
                 break
-        exchanges, _ = messages_to_exchanges(messages, "")
+        exchanges, questioner = messages_to_exchanges(messages, "")
         emitted.update(node["_id"] for node in path if node.get("userId") == target_id)
         if exchanges:
-            groups.append({"date": date, "url": url, "exchanges": exchanges})
+            # The branch is dated by the target's first reply in it: nothing
+            # the persona recalls may postdate any answer it is trained on.
+            dates = [iso_date(n.get("postedAt")) for n in path if n.get("userId") == target_id]
+            groups.append({
+                "date": min(d for d in dates if d) if any(dates) else date, "url": url,
+                "title": post.get("title") or "", "questioner": questioner, "exchanges": exchanges,
+            })
     return groups, quick_takes
 
 
@@ -313,32 +321,24 @@ def quick_take_records(quick_takes: List[Dict[str, Any]]) -> List[Dict[str, str]
 
 
 def write_transcripts(
-    dataset: DatasetLike, groups: List[Dict[str, Any]], questioner: str, target_name: str, url: str
+    dataset: DatasetLike, groups: List[Dict[str, Any]], forum_name: str, target_name: str
 ) -> int:
     """
-    Write the exchange groups, oldest first, as transcripts of up to
-    EXCHANGES_PER_TRANSCRIPT exchanges; a branch is never split.
+    Write every thread branch as its own transcript, oldest first, dated
+    and framed ("a LessWrong comment thread under the post ...").
     """
-    batches: List[List[Dict[str, Any]]] = []
-    current: List[Dict[str, Any]] = []
-    count = 0
+    article = "an" if forum_name[:1].lower() in "aeiou" else "a"
     for group in sorted(groups, key=lambda g: g["date"]):
-        if current and count + len(group["exchanges"]) > EXCHANGES_PER_TRANSCRIPT:
-            batches.append(current)
-            current, count = [], 0
-        current.append(group)
-        count += len(group["exchanges"])
-    if current:
-        batches.append(current)
-    for batch in batches:
+        title = group.get("title") or "untitled"
         write_transcript(
             dataset,
-            {"q": questioner, "a": target_name},
-            batch[0]["date"] or "unknown",
-            url,
-            [exchange for group in batch for exchange in group["exchanges"]],
+            {"q": group.get("questioner") or f"{forum_name} commenters", "a": target_name},
+            group["date"] or "unknown",
+            group["url"],
+            group["exchanges"],
+            context=f'{article} {forum_name} comment thread under the post "{title}"',
         )
-    return len(batches)
+    return len(groups)
 
 
 def import_lesswrong(
@@ -405,11 +405,11 @@ def import_lesswrong(
     if role in ("auto", "corpus") and quick_takes:
         summary["documents"] += append_corpus_records(paths, quick_take_records(quick_takes))
     if role in ("auto", "conversation") and groups:
-        summary["transcripts"] = write_transcripts(paths, groups, f"{forum_name} commenters", target_name, base_url)
+        summary["transcripts"] = write_transcripts(paths, groups, forum_name, target_name)
         summary["exchanges"] = sum(len(g["exchanges"]) for g in groups)
     hx.ok(
         f"{summary['documents']} grounding document(s), {summary['exchanges']} exchange(s) "
-        f"in {summary['transcripts']} transcript file(s) from {forum_name}"
+        f"in {summary['transcripts']} conversation(s) from {forum_name}"
     )
     return summary
 

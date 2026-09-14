@@ -5,13 +5,15 @@ CUDA) through opbdh's local execution (`--target mps|cuda`).
 """
 
 from dataclasses import asdict
+import json
 from pathlib import Path
 import os
+import re
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
-from . import hx
+from . import hx, state
 from .interactive import ask, bail, choose, confirm
 from .project import DatasetLike, dataset_paths
 
@@ -105,6 +107,84 @@ def coerce_flag_value(raw: str) -> Any:
     return raw
 
 
+# Where opbdh mounts the job directory on a pod (its runner is /opbdh-run/user/run.py).
+POD_JOB_DIR = "/opbdh-run/user"
+
+# The Qwen3.5+ family renders an assistant turn as <think>reasoning</think>
+# content, but takes the reasoning only from a separate `reasoning_content`
+# field, which opbdh's example format has no room for. This branch, spliced
+# into the model's own template, recovers it from a <think> block written
+# in the content -- the way the earlier Qwen3 templates already did.
+THINK_SPLIT = (
+    "{%- elif '</think>' in content %}\n"
+    "            {%- set reasoning_content = content.split('</think>')[0].rstrip('\\n').split('<think>')[-1].lstrip('\\n') %}\n"
+    "            {%- set content = content.split('</think>')[-1].lstrip('\\n') %}\n"
+    "        "
+)
+REASONING_FIELD_BLOCK = re.compile(
+    r"(\{%-?\s*if message\.reasoning_content is string\s*-?%\}\s*"
+    r"\{%-?\s*set reasoning_content = message\.reasoning_content\s*-?%\}\s*)"
+    r"(\{%-?\s*endif\s*-?%\})"
+)
+
+
+def fetch_chat_template(model: str) -> str:
+    """The chat template of a huggingface model id or local model directory."""
+    local = Path(model).expanduser()
+    if local.is_dir():
+        jinja = local / "chat_template.jinja"
+        if jinja.is_file():
+            return jinja.read_text(encoding="utf-8")
+        config = json.loads((local / "tokenizer_config.json").read_text(encoding="utf-8"))
+        return str(config.get("chat_template") or "")
+    from huggingface_hub import hf_hub_download  # an opbdh dependency
+
+    try:
+        return Path(hf_hub_download(model, "chat_template.jinja")).read_text(encoding="utf-8")
+    except Exception:
+        config = json.loads(Path(hf_hub_download(model, "tokenizer_config.json")).read_text(encoding="utf-8"))
+        template = config.get("chat_template") or ""
+        if isinstance(template, list):  # named templates: {"name": ..., "template": ...}
+            named = {t.get("name"): t.get("template") for t in template if isinstance(t, dict)}
+            template = named.get("default") or next(iter(named.values()), "")
+        return str(template)
+
+
+def thinking_chat_template(template: str) -> Optional[str]:
+    """
+    A copy of the template that reads <think>...</think> out of assistant
+    content, or None when the template already does (Qwen3, April 2025)
+    or has no notion of reasoning at all (then the tags are just text).
+    """
+    if "'</think>' in content" in template or '"</think>" in content' in template:
+        return None
+    patched, count = REASONING_FIELD_BLOCK.subn(lambda m: m.group(1) + THINK_SPLIT + m.group(2), template)
+    return patched if count else None
+
+
+def install_thinking_template(job_dir: Path, model: str, local: bool) -> Optional[Path]:
+    """
+    Ship a think-aware chat template with the job when the model's own
+    template needs one, and point the runner at it. Returns the path written.
+    """
+    try:
+        template = fetch_chat_template(model)
+    except Exception as e:
+        hx.warn(f"could not fetch the chat template of {model}: {e}")
+        return None
+    patched = thinking_chat_template(template)
+    if patched is None:
+        return None
+    path = job_dir / "chat_template.jinja"
+    path.write_text(patched, encoding="utf-8")
+    config_path = job_dir / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["chat_template"] = str(path) if local else f"{POD_JOB_DIR}/chat_template.jinja"
+    config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    hx.say(f"thinking format: shipping a think-aware copy of {model}'s chat template with the job")
+    return path
+
+
 # Training flags belong to OPBDH's SFT recipe, not its pod configuration.
 TRAINING_FIELDS = {
     "epochs", "learning_rate", "max_length", "per_device_batch_size",
@@ -114,8 +194,14 @@ TRAINING_FIELDS = {
 FLAG_ALIASES = {"batch_size": "per_device_batch_size", "gradient_accumulation": "gradient_accumulation_steps"}
 
 
-def prepare_finetune(dataset: DatasetLike, model: str, options: Dict[str, Any]):
-    """Import RAFT examples into a resumable native OPBDH recipe and job."""
+def prepare_finetune(dataset: DatasetLike, model: str, options: Dict[str, Any], local: bool = False):
+    """
+    Import RAFT examples into a resumable native OPBDH recipe and job.
+
+    For a dataset generated with --thinking, the job also carries a
+    think-aware copy of the model's chat template when its own would not
+    read the <think> block out of the reply (see install_thinking_template).
+    """
     opbdh = load_opbdh()
     from opbdh import finetune as ft
     paths = dataset_paths(dataset)
@@ -168,6 +254,8 @@ def prepare_finetune(dataset: DatasetLike, model: str, options: Dict[str, Any]):
     project.source_files = [str(source)]
     ft.replace_project_examples(root, project, examples)
     job = ft.prepare_finetune_job(root, project)
+    if state.load_meta(paths).get("thinking") and not project.chat_template:
+        install_thinking_template(job.directory, model, local)
     return root, project, job, base
 
 
@@ -217,7 +305,7 @@ def run_local_finetune(
     if target == "mps":
         # QLoRA's 4-bit kernels are CUDA-only; the runner refuses it there.
         overrides.setdefault("method", "lora")
-    root, project, job, _ = prepare_finetune(dataset, model, overrides)
+    root, project, job, _ = prepare_finetune(dataset, model, overrides, local=True)
     resources = ft.estimate_finetune_resources(project)
     # The estimate assumes bf16 on a GPU; on MPS the runner trains in fp32.
     required_gb = resources.vram_per_gpu_gb * (2 if target == "mps" else 1)

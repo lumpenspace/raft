@@ -1,5 +1,6 @@
-from typing import List, Dict, Union, Any
+from typing import List, Dict, Optional, Union, Any
 from enum import Enum
+import os
 import time
 import re
 from datetime import datetime
@@ -16,12 +17,17 @@ from openai.types.chat import (
 
 from . import hx
 from .prompt_manager import PromptManager
-from .embeddings_helpers import get_and_store_embedding, get_embedding
+from .embeddings_helpers import get_embedding, store_exchange_embedding
 from .sources import date_num
 from .project import DatasetLike, dataset_paths
 
 MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-4-turbo")
+
+# Seconds to pause between LLM-heavy steps. The 2023 code slept a fixed
+# 3 s per exchange for OpenAI's rate limits of the day; against a local
+# endpoint (or today's limits) there is nothing to wait for.
+PACE = float(os.environ.get("RAFT_PACE", "0"))
 
 
 class MetaDataKeyEnum(Enum):
@@ -38,13 +44,18 @@ ExtractedDataType = List[Dict[str, Union[str, datetime, int, float, bool]]]
 class MemoryManager:
     """Manages the retrieval and summarization of memories."""
 
-    def __init__(self, dataset: DatasetLike, metadata: Dict[MetaDataKeyEnum, Any]):
+    def __init__(
+        self, dataset: DatasetLike, metadata: Dict[MetaDataKeyEnum, Any], client: Optional[OpenAI] = None
+    ):
         """
         Initialize the MemoryManager.
 
         Args:
-            name (str): The name of the collection.
-            metadata (Dict[MetaDataKeyEnum, Any]): Metadata for the collection.
+            dataset: Dataset name or project paths.
+            metadata (Dict[MetaDataKeyEnum, Any]): The conversation's
+                participants / date / url; the date bounds retrieval.
+            client: An OpenAI-compatible client for answering (defaults to
+                the environment's).
         """
         self.dataset = dataset_paths(dataset)
         self.name = self.dataset.name
@@ -67,7 +78,8 @@ class MemoryManager:
         self._dated: Union[bool, None] = None
         self.encoder = encoding.encode
         self.metadata = metadata
-        self.openai_client = OpenAI()
+        self.openai_client = client or OpenAI()
+        self.prompt_manager = PromptManager()
 
     def get_similar_and_summarize(
         self, exchange: List[str], prev_answer: str, store: bool = True
@@ -89,8 +101,9 @@ class MemoryManager:
         similar: ExtractedDataType = self.get_similar_extracts(exchange, store=store)
         if not similar:
             return ""
-        print(question)
-        time.sleep(3)
+        hx.step(" ".join(question.split())[:100])
+        if PACE:
+            time.sleep(PACE)
         summaries: List[Dict[str, str]] = self.summarize_helpful_memories(
             question, similar, prev_answer
         )
@@ -135,9 +148,11 @@ class MemoryManager:
 
         Args:
             exchange (List[str]): The current exchange (question and answer).
-            store (bool): Also store the question's embedding in the
-                collection (dataset generation does; serving must not,
-                or chat questions would contaminate the corpus).
+            store (bool): Afterwards, remember the exchange (question and
+                answer, dated) as a conversation memory for later
+                conversations. Dataset generation does; serving and
+                benchmarks must not, or their questions would contaminate
+                the corpus.
 
         Returns:
             ExtractedDataType: List of similar extracts with metadata.
@@ -148,12 +163,7 @@ class MemoryManager:
         # Convert MetaDataKeyEnum keys to strings
         string_metadata = {k.value: v for k, v in self.metadata.items()}
 
-        if store:
-            embedding = get_and_store_embedding(
-                {"question": exchange[0]}, self.dataset, string_metadata
-            )
-        else:
-            embedding = get_embedding(exchange[0])
+        embedding = get_embedding(exchange[0])
         before = date_num(string_metadata.get("date"))
         query_args = {
             "query_embeddings": [embedding],
@@ -163,6 +173,12 @@ class MemoryManager:
         if before and self._collection_is_dated():
             query_args["where"] = {"date_num": {"$lt": before}}
         results = self.collection.query(**query_args)
+        if store:
+            # After the query, so an exchange never retrieves itself.
+            store_exchange_embedding(
+                {"question": exchange[0], "answer": exchange[1] if len(exchange) > 1 else ""},
+                self.dataset, string_metadata, embedding,
+            )
 
         extracted_data: ExtractedDataType = [
             {
@@ -198,18 +214,23 @@ class MemoryManager:
         Returns:
             Dict[str, str]: Summarized memory with date.
         """
-        prompt_manager = PromptManager()
-        summary = prompt_manager.summarize_memory(
-            memory["document"],
-            question,
-            prev_answer,
-            author=self.name,
-            useful_check=not no_useful_check,
-        )
-        if re.sub(r"\W+", "", summary).lower() != "skip":
-            return {"date": memory["date"], "memory": summary}
-        else:
+        prompt_manager = self.prompt_manager
+        try:
+            summary = prompt_manager.summarize_memory(
+                memory["document"],
+                question,
+                prev_answer,
+                author=self.name,
+                useful_check=not no_useful_check,
+            )
+        except Exception as e:  # one lost recollection must not end a long run
+            hx.warn(f"memory summary failed, skipping it: {e}")
             return {"date": memory["date"], "memory": ""}
+        # A summariser that says "skip" and then keeps talking has still
+        # decided to skip; only a recollection that starts as one counts.
+        if re.match(r"^\W*skip\b", summary, re.IGNORECASE):
+            return {"date": memory["date"], "memory": ""}
+        return {"date": memory["date"], "memory": summary}
 
     def summarize_helpful_memories(
         self,
@@ -238,7 +259,11 @@ class MemoryManager:
             )
         return summaries
 
-    def ask_question(self, question: str, model: str = "gpt-4-turbo") -> str:
+    def reasoning_trace(self, question: str, answer: str, memories: str, prev_answer: str) -> str:
+        """For thinking models: the reasoning from recall to the real reply."""
+        return self.prompt_manager.reasoning_trace(question, answer, memories, prev_answer, author=self.name)
+
+    def ask_question(self, question: str, model: str = "gpt-4-turbo", thinking: bool = False) -> str:
         """
         Ask a question and get an answer based on similar extracts.
 
@@ -246,33 +271,41 @@ class MemoryManager:
             question (str): The question to ask.
             model (str): The model that answers -- typically the
                 finetuned persona model.
+            thinking (bool): The persona was trained to recall and reason
+                in a <think> block; its thinking is shown on stderr and
+                only the reply is returned.
 
         Returns:
             str: The generated answer.
         """
         # store=False: asking must never write the question into the
         # grounding collection it retrieves from.
-        similar = self.get_similar_extracts([question, ""], store=False)
-        context = "\n\n".join([str(x.get("document", "")) for x in similar])
-
         memories = self.get_similar_and_summarize([question, ""], "", store=False)
-
+        today = datetime.now().date().isoformat()
+        target = self.metadata.get(MetaDataKeyEnum.PARTICIPANTS, {}).get("a") if isinstance(
+            self.metadata.get(MetaDataKeyEnum.PARTICIPANTS), dict) else None
         messages: List[ChatCompletionMessageParam] = [
-            ChatCompletionSystemMessageParam(
-                role="system", content=f"Answer in the style of {self.name}.",
+            self.prompt_manager.get_interview_system_message(
+                "someone", target or self.name, today, "a conversation", thinking
             ),
         ]
-        if context:
-            messages.append(ChatCompletionSystemMessageParam(role="system", content=context))
         if memories:
-            messages.append(ChatCompletionSystemMessageParam(role="system", content=f"Relevant memories: {memories}"))
+            messages.append(ChatCompletionSystemMessageParam(
+                role="system", content=f"Earlier writing of yours that may bear on this:\n{memories}"
+            ))
         messages.append(ChatCompletionUserMessageParam(role="user", content=question))
 
         response = self.openai_client.chat.completions.create(
             model=model, messages=messages
         )
-
-        return response.choices[0].message.content or ""
+        content = response.choices[0].message.content or ""
+        thought = getattr(response.choices[0].message, "reasoning_content", None) or ""
+        if "</think>" in content:
+            thought, content = content.split("</think>", 1)
+            thought = thought.replace("<think>", "")
+        if thought.strip():
+            hx.say(f"thinking: {' '.join(thought.split())[:1500]}")
+        return content.strip()
 
 
 def preview_context(

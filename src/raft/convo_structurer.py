@@ -2,8 +2,9 @@
 Turn conversation examples and text sources -- structured or not -- into
 the datasets raft consumes:
 
-- transcripts: data/{name}_transcript_{i}.json
+- transcripts: data/{name}_transcript_{i}.json -- one conversation each
   {"participants": {"q": ..., "a": ...}, "date": ..., "url": ...,
+   "context": "an interview" | "a LessWrong comment thread under ...",
    "exchanges": [[question, answer], ...]}
 - grounding corpus: data/{name}.jsonl, one {"title", "link", "date",
   "content"} object per line (the input of `raft chunk`).
@@ -70,9 +71,13 @@ def write_transcript(
     url: str,
     exchanges: List[List[str]],
     index: Optional[int] = None,
+    context: str = "",
 ) -> str:
     """
-    Write a transcript file in the format generate_finetune expects.
+    Write one conversation as a transcript file, the unit generate_finetune
+    works on: its date bounds what the persona may recall (only earlier
+    writing and earlier conversations), and its context ("an interview",
+    "a LessWrong comment thread under ...") frames the system prompt.
 
     Returns:
         str: The path written.
@@ -81,17 +86,16 @@ def write_transcript(
         index = next_transcript_index(dataset)
     path = transcript_path(dataset, index)
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    record: Dict[str, Any] = {
+        "participants": participants,
+        "date": date,
+        "url": url,
+        "exchanges": exchanges,
+    }
+    if context:
+        record["context"] = context
     with open(path, "w") as f:
-        json.dump(
-            {
-                "participants": participants,
-                "date": date,
-                "url": url,
-                "exchanges": exchanges,
-            },
-            f,
-            indent=2,
-        )
+        json.dump(record, f, indent=2)
     return path
 
 

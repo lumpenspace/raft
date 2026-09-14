@@ -29,7 +29,7 @@ The following actions are available:
 - fetch: Fetch the blog from Substack and store it in the data directory.
 - chunk: Chunk the blog into 4096 token pieces and store them in /data.
 - embed: Create embeddings for the chunks and store them.
-- ft:gen: Generate finetune files for the blog.
+- ft:gen: Generate finetune files for the blog (--thinking for reasoning models).
 - ft:run: Run the finetune job (OpenAI, or huggingface via opbdh).
 - bench:setup: Setup the benchmark for the blog.
 - ask: Ask a question about the blog content.
@@ -113,6 +113,12 @@ def main() -> None:
         action="store_true",
         help="ft:run: never prompt; rely on flags and opbdh config.",
     )
+    parser.add_argument(
+        "--thinking",
+        action="store_true",
+        help="ft:gen / bench:setup: format for a thinking model -- recall and a "
+        "reasoning trace in <think> blocks (remembered for later --oai runs).",
+    )
 
     args, extra = parser.parse_known_args()
 
@@ -151,13 +157,14 @@ def main() -> None:
     elif args.action == "embed":
         embeddings_helpers.store_grounding_embeddings(dataset)
     elif args.action == "ft:gen":
+        thinking = _thinking_mode(dataset, args.thinking)
         if args.oai:
-            oai_finetune.create_openai_finetune_file(dataset)
+            oai_finetune.create_openai_finetune_file(dataset, thinking=thinking)
         elif args.generic:
-            generate_finetune.generate_finetune(dataset)
+            generate_finetune.generate_finetune(dataset, thinking=thinking)
         else:
-            generate_finetune.generate_finetune(dataset)
-            oai_finetune.create_openai_finetune_file(dataset)
+            generate_finetune.generate_finetune(dataset, thinking=thinking)
+            oai_finetune.create_openai_finetune_file(dataset, thinking=thinking)
     elif args.action == "ft:run":
         from .hf_finetune import is_openai_finetunable, run_hf_finetune
         from .interactive import ask
@@ -189,13 +196,14 @@ def main() -> None:
             if adapter:
                 record_finetuned_model(dataset, adapter, "hf")
     elif args.action == "bench:setup":
+        thinking = _thinking_mode(dataset, args.thinking)
         if args.oai:
-            oai_finetune.create_openai_finetune_file(dataset, "benchmark")
+            oai_finetune.create_openai_finetune_file(dataset, "benchmark", thinking=thinking)
         elif args.generic:
-            generate_finetune.generate_benchmark(dataset)
+            generate_finetune.generate_benchmark(dataset, thinking=thinking)
         else:
-            generate_finetune.generate_benchmark(dataset)
-            oai_finetune.create_openai_finetune_file(dataset, "benchmark")
+            generate_finetune.generate_benchmark(dataset, thinking=thinking)
+            oai_finetune.create_openai_finetune_file(dataset, "benchmark", thinking=thinking)
     elif args.action == "serve":
         from .serve import run_serve
 
@@ -211,6 +219,16 @@ def main() -> None:
             print(f"Answer: {answer}")
     else:
         print(f"Unknown action: {args.action}")
+
+
+def _thinking_mode(dataset, flag: bool) -> bool:
+    """--thinking sticks to the dataset, so a later --oai pass keeps the format."""
+    from . import state
+
+    if flag:
+        state.update_meta(dataset, thinking=True)
+        return True
+    return bool(state.load_meta(dataset).get("thinking"))
 
 
 if __name__ == "__main__":

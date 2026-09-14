@@ -86,27 +86,33 @@ def read_jsonl(path):
 
 def test_both_roles_split_posts_and_threads(project):
     summary = lesswrong.import_lesswrong(project, "https://lw", "T", role="auto")
-    assert summary == {"documents": 2, "exchanges": 3, "transcripts": 1}
+    assert summary == {"documents": 2, "exchanges": 3, "transcripts": 2}
     docs = read_jsonl(project.corpus_path)
     assert [d["title"] for d in docs] == ["Own post", "T's Shortform, 2024-04-01"]
     assert docs[0]["date"] == "2023-06-01" and docs[0]["link"] == "https://lw/posts/p1"
     assert docs[1]["content"] == "A quick take." and docs[1]["link"].endswith("commentId=c4")
 
-    transcript = json.loads(project.transcript_path(1).read_text())
-    assert transcript["participants"] == {"q": "LessWrong commenters", "a": "T"}
-    assert transcript["date"] == "2024-01-01" and transcript["url"] == "https://lw"
-    exchanges = transcript["exchanges"]
-    # oldest branch first: the top-level comment answers the post's opening
-    assert exchanges[0][0].startswith('"A\'s post" by A:\n\nAAAA') and exchanges[0][0].endswith("[...]")
-    assert len(exchanges[0][0]) < 1600 and exchanges[0][1] == "Top-level take on A's post."
-    # the back-and-forth on the own post is one multi-turn branch, emitted once
-    assert exchanges[1] == ['Re: "Own post"\n\nA asks about the post.', "Reply to A on my post."]
-    assert exchanges[2] == ["A follows up.", "Second reply to A."]
+    # oldest conversation first: the top-level comment answers the post's opening
+    first = json.loads(project.transcript_path(1).read_text())
+    assert first["participants"] == {"q": "A", "a": "T"}
+    assert first["date"] == "2024-01-01" and first["url"] == "https://lw/posts/p3"
+    assert first["context"] == 'a LessWrong comment thread under the post "A\'s post"'
+    [(question, answer)] = first["exchanges"]
+    assert question.startswith('"A\'s post" by A:\n\nAAAA') and question.endswith("[...]")
+    assert len(question) < 1600 and answer == "Top-level take on A's post."
+    # the back-and-forth on the own post is one multi-turn conversation, emitted
+    # once and dated by the target's first reply in it
+    second = json.loads(project.transcript_path(2).read_text())
+    assert second["participants"] == {"q": "A", "a": "T"} and second["date"] == "2024-02-01"
+    assert second["exchanges"] == [
+        ['Re: "Own post"\n\nA asks about the post.', "Reply to A on my post."],
+        ["A follows up.", "Second reply to A."],
+    ]
 
 
 def test_conversation_role_never_touches_grounding(project):
     summary = lesswrong.import_lesswrong(project, "https://lw", "T", role="conversation")
-    assert summary["transcripts"] == 1 and summary["documents"] == 0
+    assert summary["transcripts"] == 2 and summary["documents"] == 0
     assert not project.corpus_path.exists()
 
 
@@ -183,16 +189,14 @@ def test_fetch_documents_batches_and_marks_missing():
     assert found["a1"]["_id"] == "a1" and found["a2"]["_id"] == "a2" and found["zz"] is None
 
 
-def test_write_transcripts_never_splits_a_branch(project):
+def test_write_transcripts_one_dated_conversation_each(project):
     groups = [
-        {"date": "2024-01-01", "url": "u", "exchanges": [["q1", "a1"], ["q2", "a2"]]},
-        {"date": "2024-01-02", "url": "u", "exchanges": [["q3", "a3"], ["q4", "a4"]]},
-        {"date": "2024-01-03", "url": "u", "exchanges": [["q5", "a5"]]},
+        {"date": "2024-01-02", "url": "u2", "title": "Second", "questioner": "Bo", "exchanges": [["q3", "a3"]]},
+        {"date": "2024-01-01", "url": "u1", "title": "First", "questioner": "", "exchanges": [["q1", "a1"], ["q2", "a2"]]},
     ]
-    with patch.object(lesswrong, "EXCHANGES_PER_TRANSCRIPT", 3):
-        assert lesswrong.write_transcripts(project, groups, "commenters", "T", "https://lw") == 2
+    assert lesswrong.write_transcripts(project, groups, "EA Forum", "T") == 2
     first = json.loads(project.transcript_path(1).read_text())
     second = json.loads(project.transcript_path(2).read_text())
-    assert [e[0] for e in first["exchanges"]] == ["q1", "q2"]
-    assert [e[0] for e in second["exchanges"]] == ["q3", "q4", "q5"]
-    assert second["date"] == "2024-01-02"
+    assert first["date"] == "2024-01-01" and first["participants"]["q"] == "EA Forum commenters"
+    assert first["context"] == 'an EA Forum comment thread under the post "First"'
+    assert second["participants"] == {"q": "Bo", "a": "T"} and second["url"] == "u2"
