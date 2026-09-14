@@ -292,17 +292,30 @@ def test_existing_trace_is_kept_when_it_passes():
     write.assert_not_called()
 
 
-def test_check_trace_parses_the_verdict():
+def test_check_trace_parses_the_checklist():
+    from raft.prompt_manager import parse_verdict
+
+    assert parse_verdict("LEADS: yes\nPARAPHRASE: no\nLEANS: no\nWHY: it reaches the reply via latency.") == (True, "it reaches the reply via latency.")
+    passed, why = parse_verdict("LEADS: Yes\nPARAPHRASE: no\nLEANS: **yes**\nWHY: the reply never uses the recollection.")
+    assert not passed and why.startswith("it leans on the recollection") and "never uses" in why
+    passed, why = parse_verdict("LEADS: no\nPARAPHRASE: yes\nLEANS: no")
+    assert not passed and why == "it does not lead to the reply; it restates the reply"
+    assert parse_verdict("PASS -- fine")[0] and not parse_verdict("FAIL: drifts")[0]
     manager = PromptManager()
     with patch.object(PromptManager, "client") as client:
-        message = client.chat.completions.create.return_value.choices[0].message
-        message.content = "PASS\nIt reaches the reply through the latency point."
-        assert manager.check_trace("q", "m", "r", "a", author="Sam") == (True, "It reaches the reply through the latency point.")
-        message.content = "FAIL: it pretends the reply relies on the recollection."
-        passed, why = manager.check_trace("q", "m", "r", "a", author="Sam")
-        assert not passed and why.startswith("it pretends")
+        client.chat.completions.create.return_value.choices[0].message.content = "LEADS: yes\nPARAPHRASE: no\nLEANS: no\nWHY: ok"
+        assert manager.check_trace("q", "m", "r", "a", author="Sam") == (True, "ok")
         sent = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
-        assert "more than the reply itself does" in sent
+        assert "LEANS:" in sent and "more than the reply itself does" in sent
+
+
+def test_narrated_trace_is_rewritten_before_the_judge_is_asked():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", side_effect=["The commenter brings up decaf.", "Hm, decaf is bad."]) as write, \
+         patch.object(PromptManager, "check_trace", return_value=(True, "ok")) as judge, patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "", "") == "Hm, decaf is bad."
+    assert judge.call_count == 1  # the narrated attempt never reached the judge
+    assert "narrates" in write.call_args_list[1].kwargs["objection"] and "the commenter" in write.call_args_list[1].kwargs["objection"].lower()
 
 
 def test_recheck_regenerates_traces_with_recall_and_judges_the_rest(project, monkeypatch):

@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Dict, List, Tuple
 
 from openai import OpenAI
@@ -32,6 +33,30 @@ def helper_client() -> OpenAI:
         base_url=os.environ.get("RAFT_LLM_BASE_URL") or None,
         api_key=os.environ.get("RAFT_LLM_API_KEY") or None,
     )
+
+
+def _answer(text: str, key: str) -> str:
+    match = re.search(rf"^\W*{key}\W*:\s*\**\s*(yes|no)", text, re.IGNORECASE | re.MULTILINE)
+    return match.group(1).lower() if match else ""
+
+
+def parse_verdict(text: str) -> Tuple[bool, str]:
+    """(passed, reason) from a LEADS / PARAPHRASE / LEANS / WHY checklist reply."""
+    leads, paraphrase, leans = _answer(text, "LEADS"), _answer(text, "PARAPHRASE"), _answer(text, "LEANS")
+    why = re.search(r"^\W*WHY\W*:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
+    reason = " ".join(why.group(1).split()) if why else " ".join(text.split())[:200]
+    if not leads:  # no checklist: fall back to a bare PASS/FAIL if there is one
+        return text.strip().upper().startswith("PASS"), reason
+    problems = []
+    if leads == "no":
+        problems.append("it does not lead to the reply")
+    if paraphrase == "yes":
+        problems.append("it restates the reply")
+    if leans == "yes":
+        problems.append("it leans on the recollection more than the reply does")
+    if problems:
+        return False, f"{'; '.join(problems)} ({reason})" if why else "; ".join(problems)
+    return True, reason
 
 
 class PromptManager:
@@ -151,9 +176,13 @@ class PromptManager:
                     "voice. What came to mind may or may not have shaped the reply: draw on it exactly as "
                     "far as the reply does -- if the reply builds on it, show how; if the reply does not, "
                     "leave it aside or note in passing that it is not the point here. Never manufacture a "
-                    "link. Think, do not narrate -- never describe the exchange from outside (no 'the "
-                    "commenter', 'the original claim', 'my reply'). No preamble, do not restate the reply, "
-                    "no quotation marks."
+                    "link. Think, do not narrate: start from your own reaction to what they said, never "
+                    "from a description of it (no 'the commenter', 'the question tackles', 'my reply'). "
+                    "No preamble, do not restate the reply, no quotation marks.\n\n"
+                    "The voice, on an unrelated topic: Hm, they're taking the meta-analysis as settled. I "
+                    "went through those studies in 2014 and the effect sizes fell apart on replication, so "
+                    "I don't buy the premise. The real issue is the burden of proof, and that's what I "
+                    "want to push on."
                 ),
             ),
             ChatCompletionUserMessageParam(
@@ -171,13 +200,13 @@ class PromptManager:
 
     def check_trace(self, question: str, memories: str, reasoning: str, answer: str, author: str) -> Tuple[bool, str]:
         """
-        Judge a reasoning trace against the reply it is meant to lead to.
+        Judge a reasoning trace against the reply it is meant to lead to,
+        one criterion at a time (a checklist keeps a mid-size judge honest).
 
         Returns:
             (passed, reason): passed when the trace reaches the reply's
-            conclusion and stance, contradicts nothing in it, is not a
-            paraphrase of it, and does not pretend the reply relies on the
-            recollection when the reply shows no sign of that.
+            conclusion and stance, is not a paraphrase of it, and does not
+            lean on the recollection more than the reply itself does.
         """
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
@@ -185,13 +214,13 @@ class PromptManager:
                 content=(
                     f"You check one training example for a model of {author}. You are given a question put "
                     "to them, what came to mind from their earlier writing, the private reasoning written "
-                    "for them, and the reply they actually gave. The reasoning passes only if all hold: it "
-                    "arrives at the reply's conclusion and stance; it claims nothing the reply contradicts; "
-                    "it is not merely a paraphrase or restatement of the reply; and it does not lean on the "
-                    "recollection more than the reply itself does -- if the reply shows no sign of drawing "
-                    "on it, the reasoning must not pretend it did. Answer on the first line with PASS or "
-                    "FAIL, then one sentence saying what is off (FAIL) or how the reasoning reaches the "
-                    "reply (PASS)."
+                    "for them, and the reply they actually gave. Answer exactly these four lines:\n"
+                    "LEADS: yes or no -- does the reasoning arrive at the reply's conclusion and stance, "
+                    "claiming nothing the reply contradicts?\n"
+                    "PARAPHRASE: yes or no -- is the reasoning mostly a restatement of the reply?\n"
+                    "LEANS: yes or no -- does the reasoning rely on what came to mind more than the reply "
+                    "itself does? (no if nothing came to mind, or the reply visibly builds on it)\n"
+                    "WHY: one sentence on the main problem, or on how the reasoning reaches the reply."
                 ),
             ),
             ChatCompletionUserMessageParam(
@@ -203,11 +232,7 @@ class PromptManager:
             ),
         ]
         response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
-        text = str(response.choices[0].message.content or "").strip()
-        first, _, rest = text.partition("\n")
-        passed = first.strip().upper().startswith("PASS")
-        reason = " ".join((first.split(":", 1)[1] if ":" in first else rest).split()).strip() or text[:200]
-        return passed, reason
+        return parse_verdict(str(response.choices[0].message.content or ""))
 
     def contextualise_memories_for_prompt(
         self, memories: List[Dict[str, str]]

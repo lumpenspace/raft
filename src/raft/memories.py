@@ -296,6 +296,14 @@ class MemoryManager:
 
     # One write plus this many rewrites before a trace is given up on.
     TRACE_REWRITES = 2
+    # A trace that describes the exchange from outside is not thinking; caught
+    # before the judge is asked.
+    NARRATION = re.compile(
+        r"\b(the (commenter|questioner|poster|user|interlocutor)|my (reply|response)|"
+        r"the (original|current) (claim|reaction|post|comment|question|query)|"
+        r"the question (tackles|raises|challenges|asks)|the recalled|the recollection reminded)\b",
+        re.IGNORECASE,
+    )
     # Shared tally, reported at the end of a generation run.
     trace_stats: Dict[str, int] = {"passed": 0, "rewritten": 0, "dropped": 0}
 
@@ -315,7 +323,11 @@ class MemoryManager:
                 trace = self.prompt_manager.reasoning_trace(
                     question, answer, memories, prev_answer, author=self.name, objection=objection
                 )
-            passed, why = self.prompt_manager.check_trace(question, memories, trace, answer, author=self.name)
+            narrated = self.NARRATION.search(trace)
+            if narrated:
+                passed, why = False, f"it narrates the exchange from outside ('{narrated.group(0)}'); think in the first person, in the moment"
+            else:
+                passed, why = self.prompt_manager.check_trace(question, memories, trace, answer, author=self.name)
             if passed:
                 self.trace_stats["rewritten" if objection else "passed"] += 1
                 return trace
