@@ -153,14 +153,32 @@ def test_pace_defaults_to_no_waiting():
     assert memories.PACE == 0
 
 
-def test_a_summary_that_starts_with_skip_is_a_skip(project):
+DOC = "Bigger neural nets ought to have higher inference latency in general, regardless of pipelining. Other stuff."
+
+
+def test_recall_must_cite_the_material():
+    from raft.memories import grounded_recall
+
+    assert grounded_recall("skip", DOC) == ""
+    assert grounded_recall("Skip.\nSKIP I've argued that x.", DOC) == ""
+    assert grounded_recall("I've argued that x.", DOC) == ""  # unstructured: not trusted
+    good = "SOURCE: Bigger neural nets ought to have higher inference latency in general, regardless of pipelining.\nRECALL: I've argued that bigger nets mean higher latency."
+    assert grounded_recall(good, DOC) == "I've argued that bigger nets mean higher latency."
+    edited = 'SOURCE: "bigger neural nets ought to have higher inference latency"\nRECALL: I said latency grows.'
+    assert grounded_recall(edited, DOC) == "I said latency grows."
+    invented = "SOURCE: LLMs sample high-probability responses from their training data.\nRECALL: I've argued that LLMs mode-collapse."
+    assert grounded_recall(invented, DOC) == ""
+
+
+def test_summaries_go_through_the_grounding_check(project):
     manager = MemoryManager.__new__(MemoryManager)
     manager.name = "sam"
     manager.prompt_manager = PromptManager()
-    for reply, kept in (("skip", False), ("Skip.\nSKIP I've argued that x.", False), ("I've argued that x.", True)):
-        with patch.object(PromptManager, "summarize_memory", return_value=reply):
-            got = manager.summarize_memory({"date": "2024-01-01", "document": "d"}, "q", "")
-        assert bool(got["memory"]) is kept
+    reply = "SOURCE: Other stuff.\nRECALL: I've said other stuff."
+    with patch.object(PromptManager, "summarize_memory", return_value=reply) as summarize:
+        got = manager.summarize_memory({"date": "2024-01-01", "title": "Latency", "document": DOC}, "q", "")
+    assert got["memory"] == ""  # a two-word citation is not enough anchoring
+    assert summarize.call_args.kwargs["title"] == "Latency" and summarize.call_args.kwargs["date"] == "2024-01-01"
 
 
 def test_serve_chats_with_a_local_model_behind_an_endpoint(project, monkeypatch):
