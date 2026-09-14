@@ -27,6 +27,8 @@ The following actions are available:
 - init: Initialize a persona project in the current or specified directory.
 - interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - tweets: Build a dataset from tweets via ariadne interactive.
+- lesswrong: Import a LessWrong / EA Forum user: --user <handle> (--forum, --conversations,
+  --min-karma, --role auto|corpus|conversation, --no-older-comments). Asks without --user.
 - fetch: Fetch the blog from Substack and store it in the data directory.
 - chunk: Chunk the blog into 4096 token pieces and store them in /data.
 - embed: Create embeddings for the chunks and store them.
@@ -50,6 +52,7 @@ cmds = [
     "init",
     "interactive",
     "tweets",
+    "lesswrong",
     "fetch",
     "chunk",
     "embed",
@@ -145,6 +148,39 @@ def main() -> None:
         action="store_true",
         help="ft:gen: like --recheck-traces, but write every trace afresh first (a new writer model, say).",
     )
+    parser.add_argument(
+        "--user",
+        default="",
+        help="lesswrong: the forum username or profile slug to import (asks when omitted).",
+    )
+    parser.add_argument(
+        "--forum",
+        default="lesswrong",
+        help="lesswrong: 'lesswrong' (default), 'eaforum', or a ForumMagnum base URL.",
+    )
+    parser.add_argument(
+        "--conversations",
+        type=int,
+        default=200,
+        help="lesswrong: comment threads to import, newest first (0 = all; default 200).",
+    )
+    parser.add_argument(
+        "--min-karma",
+        type=int,
+        default=None,
+        help="lesswrong: skip comments scored below this.",
+    )
+    parser.add_argument(
+        "--role",
+        choices=["auto", "corpus", "conversation"],
+        default="auto",
+        help="lesswrong: what the forum feeds -- grounding (corpus), conversations, or both (auto).",
+    )
+    parser.add_argument(
+        "--no-older-comments",
+        action="store_true",
+        help="lesswrong: leave the comments beyond the conversations out of the grounding documents.",
+    )
 
     argv, passthrough = split_passthrough(sys.argv[1:], parser)
     args, extra = parser.parse_known_args(argv)
@@ -174,6 +210,26 @@ def main() -> None:
         from .tweet_mode import run_tweet_mode
 
         run_tweet_mode(dataset or "")
+    elif args.action == "lesswrong":
+        from .lesswrong import run_lesswrong_cli, run_lesswrong_source
+
+        try:
+            if args.user:
+                run_lesswrong_cli(
+                    dataset,
+                    args.user,
+                    forum=args.forum,
+                    max_conversations=args.conversations,
+                    min_karma=args.min_karma,
+                    role=args.role,
+                    older_comments_as_grounding=not args.no_older_comments,
+                )
+            else:
+                from .state import load_meta
+
+                run_lesswrong_source(dataset, load_meta(dataset).get("target", ""), role=args.role)
+        except ValueError as exc:
+            parser.error(str(exc))
     elif args.action == "fetch":
         if dataset.project:
             from .flows import add_substack

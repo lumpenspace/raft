@@ -81,7 +81,7 @@ packages = ["src/raft"]
 # Without this, hatchling's sdist default packs the repo root — including the
 # 1.9 MB of sample corpora and chroma databases under data/.
 [tool.hatch.build.targets.sdist]
-include = ["src/raft", "tests", "README.md", "LICENSE"]
+include = ["src/raft", "tests", "examples", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
