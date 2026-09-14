@@ -8,7 +8,9 @@ that recall to the reply actually given.
 
 import json
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -111,7 +113,8 @@ def recheck_traces(dataset: DatasetLike, regenerate: str = "recall") -> Dict[str
     attempt could replace is kept aside as "reasoning_previous" (never
     lost) while "reasoning" is emptied to recall-only; the file is written
     after every conversation, atomically, so an interrupted run keeps its
-    progress.
+    progress. Conversations are independent, so RAFT_WORKERS of them run
+    at once (default 1).
 
     Args:
         regenerate: which existing traces to discard before judging --
@@ -131,36 +134,50 @@ def recheck_traces(dataset: DatasetLike, regenerate: str = "recall") -> Dict[str
             f"finish or rerun `{paths.command('ft:gen')}` first"
         ) from e
     MemoryManager.reset_trace_stats()
-    manager = None
-    prev_answer = ""
-    checked = 0
+
+    # Group the flat file into conversations: a metadata item and its examples.
+    groups: List[tuple] = []
     for item in items:
         if "metadata" in item:
-            if manager is not None:
-                _write_generic(paths.finetune_path, items)
-            meta = item["metadata"]
-            manager = MemoryManager(paths, {MetaDataKeyEnum(k): meta[k] for k in ("participants", "date", "url") if k in meta})
-            prev_answer = ""
-            continue
-        example = item.get("example") or {}
-        if manager is None or not example.get("answer"):
-            continue
-        memories = example.get("similar_memories", "")
-        previous = example.get("reasoning", "")
-        discard = regenerate == "all" or (regenerate == "recall" and memories)
-        hx.step(" ".join(example["question"].split())[:100])
-        trace = manager.reasoning_trace(
-            example["question"], example["answer"], memories, prev_answer, existing="" if discard else previous
-        )
-        if not trace and previous:
-            example["reasoning_previous"] = previous
-        elif trace and previous and trace != previous:
-            example["reasoning_previous"] = previous
-        example["reasoning"] = trace
-        prev_answer = example["answer"]
-        checked += 1
+            groups.append((item["metadata"], []))
+        elif groups and item.get("example", {}).get("answer"):
+            groups[-1][1].append(item["example"])
+
+    write_lock = threading.Lock()
+    done = {"conversations": 0, "checked": 0}
+
+    def process(group: tuple) -> int:
+        meta, examples = group
+        manager = MemoryManager(paths, {MetaDataKeyEnum(k): meta[k] for k in ("participants", "date", "url") if k in meta})
+        prev_answer = ""
+        for example in examples:
+            memories = example.get("similar_memories", "")
+            previous = example.get("reasoning", "")
+            discard = regenerate == "all" or (regenerate == "recall" and memories)
+            hx.step(" ".join(example["question"].split())[:100])
+            trace = manager.reasoning_trace(
+                example["question"], example["answer"], memories, prev_answer, existing="" if discard else previous
+            )
+            if previous and trace != previous:
+                example["reasoning_previous"] = previous
+            example["reasoning"] = trace
+            prev_answer = example["answer"]
+        with write_lock:
+            done["conversations"] += 1
+            done["checked"] += len(examples)
+            _write_generic(paths.finetune_path, items)
+            hx.say(f"  {done['conversations']}/{len(groups)} conversation(s) re-judged")
+        return len(examples)
+
+    workers = max(1, int(os.environ.get("RAFT_WORKERS", "1")))
+    if workers == 1:
+        for group in groups:
+            process(group)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(process, groups))
     _write_generic(paths.finetune_path, items)
-    hx.ok(f"{checked} reasoning trace(s) checked: {MemoryManager.trace_stats}")
+    hx.ok(f"{done['checked']} reasoning trace(s) checked: {MemoryManager.trace_stats}")
     return dict(MemoryManager.trace_stats)
 
 

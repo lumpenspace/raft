@@ -404,3 +404,26 @@ def test_recheck_regenerates_traces_with_recall_and_judges_the_rest(project, mon
     assert recheck.call_args.kwargs["regenerate"] == "all"
     assert convert.call_args.kwargs["thinking"] is True
     assert state.load_meta(project)["thinking"] is True  # a re-check is a thinking dataset from now on
+
+
+def test_recheck_runs_conversations_in_parallel(project, monkeypatch):
+    project.finetune_path.parent.mkdir(parents=True, exist_ok=True)
+    items = []
+    for n in range(4):
+        items.append({"metadata": {"participants": {"q": "Pat", "a": "Sam"}, "date": f"2024-0{n + 1}-01", "url": "u"}})
+        items.append({"example": {"question": f"q{n}", "answer": f"a{n}", "reasoning": "old"}})
+        items.append({"example": {"question": f"q{n}b", "answer": f"a{n}b", "reasoning": "old"}})
+    project.finetune_path.write_text(json.dumps(items))
+    monkeypatch.setenv("RAFT_WORKERS", "3")
+    seen = []
+
+    def trace(self, question, answer, memories, prev_answer, existing=""):
+        seen.append((question, prev_answer))
+        return "new"
+
+    with patch.object(MemoryManager, "__init__", lambda self, *a, **k: None), patch.object(MemoryManager, "reasoning_trace", trace):
+        stats = generate_finetune.recheck_traces(project, regenerate="all")
+    rows = json.loads(project.finetune_path.read_text())
+    assert all(r["example"]["reasoning"] == "new" and r["example"]["reasoning_previous"] == "old" for r in rows if "example" in r)
+    assert sorted(seen) == sorted([(f"q{n}", "") for n in range(4)] + [(f"q{n}b", f"a{n}") for n in range(4)])
+    assert isinstance(stats, dict)

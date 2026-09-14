@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Union, Any
 from enum import Enum
 import os
+import threading
 import time
 import re
 from datetime import datetime
@@ -306,11 +307,18 @@ class MemoryManager:
     )
     # Tally of the current run; reset by the callers that report it.
     trace_stats: Dict[str, int] = {"passed": 0, "rewritten": 0, "dropped": 0, "unjudged": 0}
+    _stats_lock = threading.Lock()
 
     @classmethod
     def reset_trace_stats(cls) -> None:
-        for key in cls.trace_stats:
-            cls.trace_stats[key] = 0
+        with cls._stats_lock:
+            for key in cls.trace_stats:
+                cls.trace_stats[key] = 0
+
+    @classmethod
+    def _tally(cls, key: str) -> None:
+        with cls._stats_lock:
+            cls.trace_stats[key] += 1
 
     def reasoning_trace(
         self, question: str, answer: str, memories: str, prev_answer: str, existing: str = ""
@@ -355,15 +363,15 @@ class MemoryManager:
                     passed, why = False, "the judge could not be reached"
             if passed:
                 if why == NO_VERDICT:
-                    self.trace_stats["unjudged"] += 1
+                    self._tally("unjudged")
                     hx.warn("the judge gave no verdict; keeping the trace")
                 else:
-                    self.trace_stats["rewritten" if attempt else "passed"] += 1
+                    self._tally("rewritten" if attempt else "passed")
                 return trace
             objection, rejected = why or "the judge rejected it", trace
             hx.say(f"reasoning trace rejected ({objection[:120]}); rewriting")
             trace = ""
-        self.trace_stats["dropped"] += 1
+        self._tally("dropped")
         hx.warn("no reasoning trace led to the reply; keeping the recall only")
         return ""
 

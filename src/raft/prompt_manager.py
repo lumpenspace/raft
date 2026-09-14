@@ -164,7 +164,7 @@ class PromptManager:
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages)
+        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages, max_tokens=400)
         return str(response.choices[0].message.content).strip()
 
     def reasoning_trace(
@@ -215,7 +215,7 @@ class PromptManager:
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
+        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages, max_tokens=700)
         return str(response.choices[0].message.content).strip()
 
     def check_trace(
@@ -255,7 +255,9 @@ class PromptManager:
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages, temperature=0)
+        response = self.client.chat.completions.create(
+            model=REASONING_MODEL, messages=messages, temperature=0, max_tokens=300
+        )
         return parse_verdict(str(response.choices[0].message.content or ""))
 
     def contextualise_memories_for_prompt(
