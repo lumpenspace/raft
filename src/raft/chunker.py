@@ -25,7 +25,9 @@ def map_line(line: str) -> Tuple[str, str, int]:
             - the decoded version, and
             - the length of the encoded line.
     """
-    encoded = encoding.encode(line)
+    # Text about tokenizers contains strings like <|endoftext|>; they are
+    # text here, not special tokens, and must not abort the chunking.
+    encoded = encoding.encode(line, disallowed_special=())
     if len(encoded) < MAX_EMBEDDING_LENGTH:
         return (line, encoding.decode(encoded), len(encoded))
     else:

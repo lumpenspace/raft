@@ -236,3 +236,15 @@ def test_each_role_can_have_its_own_endpoint(monkeypatch):
     assert client.call_args.kwargs == {"base_url": "http://helper:1/v1", "api_key": "h"}
     assert pm.REASONING_MODEL  # the persona's own client stays OPENAI_BASE_URL / OPENAI_API_KEY
     embeddings_helpers._client = None
+
+
+def test_text_about_special_tokens_chunks_and_counts(project):
+    from raft import files_helper
+
+    project.corpus_path.parent.mkdir(parents=True, exist_ok=True)
+    project.corpus_path.write_text(json.dumps({"title": "t", "link": "l", "date": "2024-01-01",
+                                               "content": "GPT stops at <|endoftext|> and <|im_end|>."}) + "\n")
+    files_helper.chunker(project)
+    [(meta, chunk)] = [json.loads(line) for line in project.chunks_path.read_text().splitlines()]
+    assert "<|endoftext|>" in chunk and meta["title"] == "t"
+    assert oai_finetune.count_tokens({"content": "<|endoftext|>"}) > 0

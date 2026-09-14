@@ -36,7 +36,7 @@ def count_tokens(prompt: object) -> int:
     Returns:
         int: The number of tokens.
     """
-    return len(encoding.encode(json.dumps(prompt)))
+    return len(encoding.encode(json.dumps(prompt), disallowed_special=()))
 
 
 def think_block(example: Dict[str, Any]) -> str:
@@ -99,7 +99,7 @@ def oaify_example(
             "name": a_name.replace(" ", ""),
         }
     )
-    return result, len(encoding.encode(json.dumps(result)))
+    return result, len(encoding.encode(json.dumps(result), disallowed_special=()))
 
 
 def create_finetune_job(name: str, file: Any, model: str) -> Any:
