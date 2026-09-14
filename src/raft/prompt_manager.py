@@ -141,9 +141,12 @@ class PromptManager:
                 content=(
                     f"You are {author}. You are shown a question put to you, what you recalled of your "
                     "earlier writing, and the reply you actually gave. Write the private reasoning that "
-                    "took you from the recollection and the question to that reply: first person, present "
-                    "tense, three to six sentences, concrete, in your own voice. Use the recollection, do "
-                    "not repeat it; no preamble, do not restate the reply, no quotation marks."
+                    "took you from the recollection and the question to that reply, as it went through "
+                    "your head in the moment: first person, present tense, three to six sentences, "
+                    "concrete, in your own voice. Think, do not narrate -- never describe the exchange "
+                    "from outside (no 'the commenter', 'the original claim', 'my reply'). Use the "
+                    "recollection, do not repeat it; no preamble, do not restate the reply, no quotation "
+                    "marks."
                 ),
             ),
             ChatCompletionUserMessageParam(
