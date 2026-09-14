@@ -26,6 +26,14 @@ def _context(text: str) -> str:
     return text if len(text) <= CONTEXT_CHARS else text[:CONTEXT_CHARS].rstrip() + " [...]"
 
 
+def helper_client() -> OpenAI:
+    """An OpenAI-compatible client for the helper LLM (see PromptManager.client)."""
+    return OpenAI(
+        base_url=os.environ.get("RAFT_LLM_BASE_URL") or None,
+        api_key=os.environ.get("RAFT_LLM_API_KEY") or None,
+    )
+
+
 class PromptManager:
     """Manages prompts for the RAFT project."""
 
@@ -35,8 +43,13 @@ class PromptManager:
 
     @property
     def client(self) -> OpenAI:
+        """
+        The helper-LLM client (summaries, reasoning traces). RAFT_LLM_BASE_URL
+        / RAFT_LLM_API_KEY point it at a different server than the persona
+        model is served from; unset, the OpenAI defaults apply.
+        """
         if self._client is None:
-            self._client = OpenAI()
+            self._client = helper_client()
         return self._client
 
     def get_interview_system_message(

@@ -199,3 +199,22 @@ def test_a_failed_summary_is_skipped_not_fatal():
     manager.prompt_manager = PromptManager()
     with patch.object(PromptManager, "summarize_memory", side_effect=RuntimeError("500")), patch("raft.memories.hx.warn"):
         assert manager.summarize_memory({"date": "2024-01-01", "document": "d"}, "q", "") == {"date": "2024-01-01", "memory": ""}
+
+
+def test_each_role_can_have_its_own_endpoint(monkeypatch):
+    from raft import convo_structurer
+    from raft import prompt_manager as pm
+
+    monkeypatch.setenv("RAFT_LLM_BASE_URL", "http://helper:1/v1")
+    monkeypatch.setenv("RAFT_LLM_API_KEY", "h")
+    monkeypatch.setenv("RAFT_EMBEDDING_BASE_URL", "http://embed:2/v1")
+    monkeypatch.setenv("RAFT_EMBEDDING_API_KEY", "e")
+    monkeypatch.setenv("OPENAI_API_KEY", "persona")
+    embeddings_helpers._client = None
+    assert str(embeddings_helpers._get_client().base_url) == "http://embed:2/v1/"
+    assert str(PromptManager().client.base_url) == "http://helper:1/v1/"
+    with patch("raft.prompt_manager.OpenAI") as client:
+        convo_structurer.helper_client()
+    assert client.call_args.kwargs == {"base_url": "http://helper:1/v1", "api_key": "h"}
+    assert pm.REASONING_MODEL  # the persona's own client stays OPENAI_BASE_URL / OPENAI_API_KEY
+    embeddings_helpers._client = None
