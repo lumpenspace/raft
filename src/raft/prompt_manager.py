@@ -80,31 +80,38 @@ class PromptManager:
         prev_answer: str,
         author: str,
         useful_check: bool = True,
+        date: str = "",
+        title: str = "",
     ) -> str:
         """
         Turn a retrieved passage (earlier writing, or an earlier exchange)
         into a first-person recollection the persona can draw on -- or
         "skip" when it does not bear on the question.
+
+        The reply is quote-anchored: it must cite one verbatim sentence of
+        the material (SOURCE) before the recollection (RECALL), so the
+        caller can drop recollections the material does not support --
+        weak matches otherwise tempt a model to invent what it "argued".
         """
         if useful_check:
-            instruction = (
-                "Decide whether it bears on the question. If it does, restate its relevant point in "
-                "one or two sentences, in the first person, as a recollection you could draw on "
-                "(\"I've argued that...\") -- type it directly, no preamble. If it does not, reply with "
-                "the single word skip and nothing else."
+            decision = (
+                "Decide whether it bears on the question. If nothing in it does, reply with the single "
+                "word skip. Otherwise reply in exactly this form:"
             )
         else:
-            instruction = (
-                "Restate its relevant point in one or two sentences, in the first person, as a "
-                "recollection you could draw on -- type it directly, no preamble."
-            )
+            decision = "Reply in exactly this form:"
+        origin = ", ".join(part for part in (date, f'"{title}"' if title else "") if part)
 
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
                 role="system",
                 content=(
-                    f"You are {author}, about to reply in a conversation. Below is something you "
-                    f"wrote or said earlier. {instruction}"
+                    f"You are {author}, about to reply in a conversation. Below is something you wrote or "
+                    f"said earlier. {decision}\n"
+                    "SOURCE: <one sentence copied verbatim from the earlier material>\n"
+                    "RECALL: <one or two sentences, first person, restating that point as a recollection you "
+                    "could draw on -- \"I've argued that...\">\n"
+                    "Only restate what the material actually says; never infer what you might have thought."
                 ),
             ),
             ChatCompletionUserMessageParam(
@@ -112,7 +119,7 @@ class PromptManager:
                 content=(
                     f"Question: {question}\n\n"
                     f"Your previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
-                    f"Earlier material:\n{memory}"
+                    f"Earlier material{f' ({origin})' if origin else ''}:\n{memory}"
                 ),
             ),
         ]

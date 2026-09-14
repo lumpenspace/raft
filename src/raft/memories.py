@@ -41,6 +41,37 @@ class MetaDataKeyEnum(Enum):
 ExtractedDataType = List[Dict[str, Union[str, datetime, int, float, bool]]]
 
 
+def _words(text: str) -> List[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def grounded_recall(summary: str, document: str) -> str:
+    """
+    The RECALL of a SOURCE/RECALL reply, if its SOURCE really is in the
+    document (most of its words, in a row, allowing for punctuation and
+    small edits); "" for a skip, an unstructured reply, or a citation the
+    material does not contain -- the mark of an invented recollection.
+    """
+    if re.match(r"^\W*skip\b", summary, re.IGNORECASE):
+        return ""
+    match = re.search(r"SOURCE:\s*(.+?)\s*RECALL:\s*(.+)", summary, re.DOTALL | re.IGNORECASE)
+    if not match:
+        return ""
+    source, recall = match.group(1).strip().strip("\"'“”"), match.group(2).strip()
+    cited, haystack = _words(source), _words(document)
+    if len(cited) < 4 or not recall:
+        return ""
+    # Longest run of the citation's words found in order in the document.
+    text = " " + " ".join(haystack) + " "
+    best = 0
+    for start in range(len(cited)):
+        for end in range(len(cited), start + best, -1):
+            if f" {' '.join(cited[start:end])} " in text:
+                best = max(best, end - start)
+                break
+    return recall if best >= max(4, int(0.6 * len(cited))) else ""
+
+
 class MemoryManager:
     """Manages the retrieval and summarization of memories."""
 
@@ -186,6 +217,9 @@ class MemoryManager:
                 "document": document,
                 "participants": metadata.get("participants", "Unknown"),
                 "url": metadata.get("url", ""),
+                "title": metadata.get("title") or (
+                    f"exchange with {metadata.get('participants')}" if metadata.get("kind") == "exchange" else ""
+                ),
             }
             for metadata, document in zip(
                 results["metadatas"][0] if results["metadatas"] else [],
@@ -222,15 +256,13 @@ class MemoryManager:
                 prev_answer,
                 author=self.name,
                 useful_check=not no_useful_check,
+                date=str(memory.get("date") or ""),
+                title=str(memory.get("title") or ""),
             )
         except Exception as e:  # one lost recollection must not end a long run
             hx.warn(f"memory summary failed, skipping it: {e}")
             return {"date": memory["date"], "memory": ""}
-        # A summariser that says "skip" and then keeps talking has still
-        # decided to skip; only a recollection that starts as one counts.
-        if re.match(r"^\W*skip\b", summary, re.IGNORECASE):
-            return {"date": memory["date"], "memory": ""}
-        return {"date": memory["date"], "memory": summary}
+        return {"date": memory["date"], "memory": grounded_recall(summary, str(memory["document"]))}
 
     def summarize_helpful_memories(
         self,

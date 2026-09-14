@@ -47,6 +47,10 @@ RAFT rethought for thinking models — the reasoning is in
   (`RAFT_MAX_EXAMPLE_TOKENS`); the fixed rate-limit sleeps became `RAFT_PACE`
   (default 0); the system prompt no longer mentions a function that will be
   "called automatically".
+- **Recall is quote-anchored** (2.8.2). A recollection must cite a verbatim
+  sentence of the material it comes from, or it is dropped: retrieval always
+  returns *something*, and a small summariser will otherwise invent what the
+  persona "argued" in a document that says nothing of the kind.
 - **Three roles, three endpoints.** The persona model answers through
   `OPENAI_BASE_URL`; the helper LLM that writes summaries and reasoning traces
   can sit elsewhere (`RAFT_LLM_BASE_URL`, `RAFT_LLM_MODEL`, and
