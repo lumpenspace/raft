@@ -208,7 +208,8 @@ def test_older_comments_become_grounding_with_their_reply_context(project):
     # the newest branch (c2, c3) is the one conversation; c1 is older and becomes grounding, c4 stays a quick take
     assert summary["transcripts"] == 1 and summary["exchanges"] == 2
     docs = read_jsonl(project.corpus_path)
-    assert sorted(d["title"] for d in docs) == sorted(["Own post", "T's Shortform, 2024-04-01", 'comment on "A\'s post", 2024-01-01'])
+    assert sorted(d["title"] for d in docs) == sorted([
+        "Own post", "T's Shortform, 2024-04-01", 'comment on "A\'s post", 2024-01-01', "wiki comment, 2024-06-01"])
     older = next(d for d in docs if d["title"].startswith("comment on"))
     assert older["content"].startswith('Commenting on "A\'s post" by A:\n\nTop-level take')
     assert older["date"] == "2024-01-01" and older["link"].endswith("commentId=c1")

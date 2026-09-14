@@ -352,10 +352,12 @@ def comment_records(
             if len(lead) > REPLY_CONTEXT_CHARS:
                 lead = lead[:REPLY_CONTEXT_CHARS].rstrip() + " [...]"
             opening = f"Replying to {author_of(parent)} ({lead})"
-        else:
+        elif post:
             opening = f'Commenting on "{post.get("title") or "a post"}" by {author_of(post)}'
+        else:
+            opening = "Commenting on a wiki page"
         records.append({
-            "title": f'comment on "{post.get("title") or "a post"}", {date}',
+            "title": f'comment on "{post["title"]}", {date}' if post.get("title") else f"wiki comment, {date}",
             "link": comment.get("pageUrl") or "",
             "date": iso_date(comment.get("postedAt")),
             "content": f"{opening}:\n\n{text_of(comment)}",
