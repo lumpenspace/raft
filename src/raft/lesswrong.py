@@ -32,7 +32,7 @@ from . import hx, state
 from .convo_structurer import messages_to_exchanges, write_transcript
 from .interactive import ask, choose, confirm
 from .project import DatasetLike, dataset_paths
-from .sources import USER_AGENT, append_corpus_records, iso_date
+from .sources import USER_AGENT, append_corpus_records, in_window, iso_date
 
 FORUMS = [
     ("LessWrong (also covers the Alignment Forum)", "https://www.lesswrong.com"),
@@ -400,6 +400,8 @@ def import_lesswrong(
     min_karma: Optional[int] = None,
     forum_name: str = "LessWrong",
     older_comments_as_grounding: bool = False,
+    since: str = "",
+    until: str = "",
 ) -> Dict[str, int]:
     """
     Import a user's forum activity.
@@ -413,6 +415,8 @@ def import_lesswrong(
         older_comments_as_grounding: Every comment not used as a
             conversation answer becomes a dated grounding document
             (needs a grounding role).
+        since, until: Only posts and comments dated within the window
+            (YYYY-MM-DD, either end optional); listing stops at `since`.
 
     Returns:
         {"documents", "exchanges", "transcripts"} counts.
@@ -429,10 +433,15 @@ def import_lesswrong(
     summary = {"documents": 0, "exchanges": 0, "transcripts": 0}
     want_threads = role in ("auto", "conversation")
 
+    def dated(item: Dict[str, Any]) -> bool:
+        return in_window(item.get("postedAt"), since, until)
+
     if role in ("auto", "corpus"):
         hx.step("listing posts")
         posts = list_by_date(base_url, "posts", "userPosts", user["_id"], POST_FIELDS)
-        summary["documents"] += append_corpus_records(paths, [post_record(p) for p in posts if usable_post(p)])
+        summary["documents"] += append_corpus_records(
+            paths, [post_record(p) for p in posts if usable_post(p) and dated(p)]
+        )
 
     grounding_comments = older_comments_as_grounding and role in ("auto", "corpus")
     hx.step("listing comments" + (" and the threads they reply to" if want_threads else ""))
@@ -444,11 +453,17 @@ def import_lesswrong(
     quick_takes: List[Dict[str, Any]] = []
     enough = False
     for page in iter_by_date(base_url, "comments", "allRecentComments", user["_id"], COMMENT_FIELDS):
-        page = [c for c in page if not c.get("deleted") and text_of(c)]
+        # Newest first: once a page reaches back past `since`, the rest is older still.
+        past_window = bool(since) and any(iso_date(c.get("postedAt")) < since for c in page)
+        page = [c for c in page if not c.get("deleted") and text_of(c) and dated(c)]
+        if past_window and not page:
+            break
         if min_karma is not None:
             page = [c for c in page if (c.get("baseScore") or 0) >= min_karma]
         comments.extend(page)
         if enough:
+            if past_window:
+                break
             continue  # only listing the rest for grounding
         if want_threads:
             ancestors.update(resolve_ancestors(base_url, page, known))
@@ -462,6 +477,8 @@ def import_lesswrong(
             enough = True
             if not grounding_comments:
                 break
+        if past_window:
+            break
     if max_conversations:
         groups = groups[:max_conversations]  # newest first
     if grounding_comments:
@@ -511,12 +528,14 @@ def run_lesswrong_cli(
     min_karma: Optional[int] = None,
     role: str = "auto",
     older_comments_as_grounding: bool = True,
+    since: str = "",
+    until: str = "",
 ) -> Dict[str, int]:
-    """`raft lesswrong --user <handle>`: the import without prompts (0 conversations = every thread)."""
+    """`raft fetch lesswrong --user <handle>`: the import without prompts (0 conversations = every thread)."""
     forum_name, base_url = resolve_forum(forum)
     return import_lesswrong(
         dataset, base_url, handle, role=role, max_conversations=max_conversations or None, min_karma=min_karma,
-        forum_name=forum_name, older_comments_as_grounding=older_comments_as_grounding,
+        forum_name=forum_name, older_comments_as_grounding=older_comments_as_grounding, since=since, until=until,
     )
 
 

@@ -19,7 +19,7 @@ if [ -n "$(ls -A conversations 2>/dev/null)" ]; then
   exit 1
 fi
 
-raft lesswrong --user gwern --conversations "${CONVERSATIONS:-200}"
+raft fetch lesswrong --user gwern --limit "${CONVERSATIONS:-200}"
 
 cat <<EOF
 

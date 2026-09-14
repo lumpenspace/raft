@@ -8,13 +8,13 @@ documents (data/{name}.jsonl, ready for `raft chunk`) and reply branches
 become q/a transcripts (ready for `raft ft:gen`).
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .convo_structurer import messages_to_exchanges, write_transcript
 from . import hx
 from .interactive import ask, ask_path, bail, choose, confirm
 from .project import DatasetLike, DatasetPaths, dataset_paths
-from .sources import iso_date  # noqa: F401  (re-exported; used below)
+from .sources import in_window, iso_date  # noqa: F401  (iso_date re-exported; used below)
 from . import state
 
 ARIADNE_INSTALL_HINT = (
@@ -84,8 +84,27 @@ def ask_build_options() -> Dict[str, Any]:
     return options
 
 
+def select_documents(
+    documents: List[Dict[str, Any]], since: str = "", until: str = "", limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """The shared fetch filters on ariadne documents: the window, then the newest `limit`."""
+    dated = lambda doc: iso_date((doc.get("metadata") or {}).get("target_created_at"))  # noqa: E731
+    kept = [doc for doc in documents if in_window(dated(doc), since, until)]
+    if len(kept) < len(documents):
+        hx.say(f"  {len(documents) - len(kept)} thread(s) outside {since or '...'}..{until or '...'} left out")
+    if limit:
+        kept = sorted(kept, key=dated, reverse=True)[:limit]
+    return kept
+
+
 def import_documents(
-    dataset: DatasetLike, documents: List[Dict[str, Any]], target: str, role: str = "auto"
+    dataset: DatasetLike,
+    documents: List[Dict[str, Any]],
+    target: str,
+    role: str = "auto",
+    since: str = "",
+    until: str = "",
+    limit: Optional[int] = None,
 ) -> None:
     """
     Import ariadne raft documents as grounding corpus + transcripts.
@@ -94,11 +113,14 @@ def import_documents(
         name (str): Dataset name (data/{name}*).
         documents (List[Dict[str, Any]]): raft.documents.v1 objects.
         target (str): Handle/name of the person being emulated.
+        since, until, limit: the shared fetch window and cap (threads,
+            newest first).
     """
     from .sources import append_corpus_records
 
     if role not in ("auto", "conversation", "corpus"):
         raise ValueError(f"unknown source role: {role}")
+    documents = select_documents(documents, since, until, limit)
     paths = dataset_paths(dataset)
     # Ariadne reports usernames without the leading @; match on the bare handle.
     handle = target.lstrip("@")
@@ -236,9 +258,33 @@ def normalize_messages(
     return normalized
 
 
-def _gather_x(ariadne, dataset: DatasetLike, default_handle: str, role: str = "auto") -> int:
+def build_options_for(user: str = "", archive: str = "", since: str = "") -> Dict[str, Any]:
+    """
+    The non-interactive X options behind `raft fetch tweets --user` /
+    `--archive`: a public handle fetched live, or an archive export (its
+    owner's tweets, or --user's). The Community Archive is always on; a
+    twitterapi.io key comes from ariadne's own TWITTERAPI_IO_KEY.
+    """
+    options: Dict[str, Any] = {"allow_empty": True, "community_archive": True}
+    if archive:
+        options["archive"] = archive
+        if user:
+            options["for_user"] = user.lstrip("@")
+        else:
+            options["all_loaded"] = True
+    else:
+        options["target_user"] = user.lstrip("@")
+    if since:
+        options["since"] = since
+    return options
+
+
+def _gather_x(
+    ariadne, dataset: DatasetLike, default_handle: str, role: str = "auto",
+    options: Dict[str, Any] | None = None, until: str = "", limit: Optional[int] = None,
+) -> int:
     """Run the X/Twitter branch and import its documents. Returns doc count."""
-    options = ask_build_options()
+    options = options or ask_build_options()
     paths = dataset_paths(dataset)
     if paths.project:
         options["cache"] = str(paths.ariadne_cache_path)
@@ -263,11 +309,14 @@ def _gather_x(ariadne, dataset: DatasetLike, default_handle: str, role: str = "a
             "recover them later with `ariadne cache retry`, then re-run tweet mode"
         )
     handle = options.get("target_user") or options.get("for_user") or default_handle
-    import_documents(paths, documents, handle, role=role)
+    import_documents(paths, documents, handle, role=role, since=options.get("since", ""), until=until, limit=limit)
     return len(documents)
 
 
-def _gather_bluesky(ariadne, dataset: DatasetLike, default_handle: str, role: str = "auto") -> int:
+def _gather_bluesky(
+    ariadne, dataset: DatasetLike, default_handle: str, role: str = "auto",
+    handle: str = "", since: str = "", until: str = "", limit: Optional[int] = None,
+) -> int:
     """Run the Bluesky branch and import its documents. Returns doc count."""
     if not hasattr(ariadne, "build_bluesky"):
         hx.warn(
@@ -275,11 +324,12 @@ def _gather_bluesky(ariadne, dataset: DatasetLike, default_handle: str, role: st
             "  pip install -U ariadne-x"
         )
         return 0
-    handle = ask(
-        "Bluesky handle (e.g. alice.bsky.social)",
-        default_handle.lstrip("@") if "." in default_handle else None,
-    )
-    since = ask("Only posts on or after [YYYY-MM-DD] (empty = all)", "")
+    if not handle:
+        handle = ask(
+            "Bluesky handle (e.g. alice.bsky.social)",
+            default_handle.lstrip("@") if "." in default_handle else None,
+        )
+        since = ask("Only posts on or after [YYYY-MM-DD] (empty = all)", "")
     hx.step("reconstructing Bluesky threads")
     result = ariadne.build_bluesky(handle, since=since or None, allow_empty=True)
     for warning in result.warnings[:10]:
@@ -289,15 +339,40 @@ def _gather_bluesky(ariadne, dataset: DatasetLike, default_handle: str, role: st
         hx.warn("no Bluesky conversations were reconstructed")
         return 0
     hx.ok(f"reconstructed {len(documents)} Bluesky thread(s)")
-    import_documents(dataset, documents, handle.lstrip("@"), role=role)
+    import_documents(dataset, documents, handle.lstrip("@"), role=role, since=since, until=until, limit=limit)
     return len(documents)
 
 
+NETWORKS = ("x", "bluesky", "both")
+
+
+def guess_network(user: str, archive: str) -> str:
+    """A dotted handle (alice.bsky.social) is Bluesky; anything else, or an archive, is X."""
+    if archive:
+        return "x"
+    return "bluesky" if "." in user.lstrip("@") else "x"
+
+
 def run_tweet_mode(
-    dataset: DatasetLike | str = "", target: str = "", standalone: bool = True, role: str = "auto"
+    dataset: DatasetLike | str = "",
+    target: str = "",
+    standalone: bool = True,
+    role: str = "auto",
+    user: str = "",
+    archive: str = "",
+    network: str = "",
+    since: str = "",
+    until: str = "",
+    limit: Optional[int] = None,
 ) -> None:
     """
-    Run the interactive tweet-mode flow end to end.
+    Run the tweet-mode flow end to end.
+
+    Interactive by default. With `user` (a public X handle, or a dotted
+    Bluesky handle) or `archive` (an X export) it asks nothing: that is
+    `raft fetch tweets --user <handle>`. `network` (x, bluesky, both) is
+    guessed from the handle when not given; `since`, `until` and `limit`
+    are the shared fetch window and cap.
 
     Args:
         name (str, optional): Dataset name; asked interactively if empty.
@@ -308,18 +383,29 @@ def run_tweet_mode(
     if standalone:
         hx.banner("posts -> persona dataset, via ariadne")
     ariadne = load_ariadne()
+    scripted = bool(user or archive)
+    if network and network not in NETWORKS:
+        raise ValueError(f"unknown network {network!r}: x, bluesky or both")
+    if scripted and not network:
+        network = guess_network(user, archive)
+    if network == "both" and (archive or "." not in user):
+        raise ValueError("--network both needs a dotted Bluesky handle in --user and no --archive")
 
-    network = choose(
-        "Which network(s) should the dataset draw from?",
-        ["X / Twitter", "Bluesky", "both -- merge into one dataset"],
-        default=0,
-    )
-    want_x = network in (0, 2)
-    want_bsky = network in (1, 2)
+    if not network:
+        pick = choose(
+            "Which network(s) should the dataset draw from?",
+            ["X / Twitter", "Bluesky", "both -- merge into one dataset"],
+            default=0,
+        )
+        network = NETWORKS[pick]
+    want_x = network in ("x", "both")
+    want_bsky = network in ("bluesky", "both")
 
     paths: DatasetPaths | None = dataset_paths(dataset) if dataset else None
     if paths and paths.project and not target:
         target = state.load_meta(paths).get("target", "")
+    if not target and scripted:
+        target = user.lstrip("@") or archive
     if not target:
         target = ask("Target to emulate (handle or name)")
     if paths is None:
@@ -329,9 +415,13 @@ def run_tweet_mode(
 
     total = 0
     if want_x:
-        total += _gather_x(ariadne, paths, target, role=role)
+        options = build_options_for(user, archive, since) if scripted else None
+        total += _gather_x(ariadne, paths, target, role=role, options=options, until=until, limit=limit)
     if want_bsky:
-        total += _gather_bluesky(ariadne, paths, target, role=role)
+        total += _gather_bluesky(
+            ariadne, paths, target, role=role,
+            handle=user.lstrip("@") if scripted else "", since=since, until=until, limit=limit,
+        )
 
     if total == 0:
         bail("no conversations were reconstructed from the chosen source(s)")

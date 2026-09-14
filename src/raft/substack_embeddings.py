@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from time import sleep
 from random import randrange
-from typing import Dict, Any, Generator, List
+from typing import Dict, Any, Generator, List, Optional
 
 
 def fetch_json(url: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -22,12 +22,20 @@ def fetch_html(url: str) -> str:
     return response.text
 
 
-def fetch_and_parse(url: str) -> Generator[Dict[str, Any], None, None]:
-    """Fetch and parse blog posts from the given URL."""
-    limit = 12
+def fetch_and_parse(
+    url: str, since: str = "", until: str = "", limit: Optional[int] = None
+) -> Generator[Dict[str, Any], None, None]:
+    """
+    Fetch and parse blog posts from the given URL: the archive listing is
+    newest first, so a window or limit stops the paging early.
+    """
+    from .sources import in_window, iso_date
+
+    page_size = 12
     offset = 0
+    yielded = 0
     while True:
-        params = {"limit": limit, "offset": offset}
+        params = {"limit": page_size, "offset": offset}
         entries = fetch_json(url, params=params)
         if not entries:
             break
@@ -35,6 +43,12 @@ def fetch_and_parse(url: str) -> Generator[Dict[str, Any], None, None]:
             link = item["canonical_url"]
             title = item["title"]
             date = item["post_date"]
+            if since and iso_date(date) and iso_date(date) < since:
+                return
+            if not in_window(date, since, until):
+                continue
+            if limit and yielded >= limit:
+                return
             html = fetch_html(link)
             soup = BeautifulSoup(html, "html.parser")
             content = soup.find("div", {"class": "markup"})
@@ -45,9 +59,10 @@ def fetch_and_parse(url: str) -> Generator[Dict[str, Any], None, None]:
                     "date": date,
                     "content": content.text,
                 }
+                yielded += 1
             timeout = randrange(2, 20)
             sleep(timeout)
-        offset += limit
+        offset += page_size
 
 
 def main(blog: str) -> None:
