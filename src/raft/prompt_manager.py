@@ -1,5 +1,6 @@
 import os
-from typing import Dict, List
+import re
+from typing import Dict, List, Tuple
 
 from openai import OpenAI
 from openai.types.chat import (
@@ -32,6 +33,46 @@ def helper_client() -> OpenAI:
         base_url=os.environ.get("RAFT_LLM_BASE_URL") or None,
         api_key=os.environ.get("RAFT_LLM_API_KEY") or None,
     )
+
+
+_MARKERS = r"^[\s\-*#>\d.)(]*"  # list bullets, numbering, markdown emphasis before a label
+
+
+def _answer(text: str, key: str) -> str:
+    match = re.search(_MARKERS + rf"\**{key}\**\s*[:\-]\s*\**\s*(yes|no)\b", text, re.IGNORECASE | re.MULTILINE)
+    return match.group(1).lower() if match else ""
+
+
+NO_VERDICT = "no verdict"
+
+
+def parse_verdict(text: str) -> Tuple[bool, str]:
+    """
+    (passed, reason) from a LEADS / PARAPHRASE / LEANS / WHY checklist
+    reply. A reply the judge failed to format is reported as passed with
+    the reason NO_VERDICT: the caller keeps the trace rather than treat a
+    formatting slip as a rejection.
+    """
+    leads, paraphrase, leans = _answer(text, "LEADS"), _answer(text, "PARAPHRASE"), _answer(text, "LEANS")
+    why = re.search(_MARKERS + r"\**WHY\**\s*:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
+    reason = " ".join(why.group(1).split()) if why else " ".join(text.split())[:200]
+    if not (leads and paraphrase and leans):
+        # A bare verdict somewhere in the first line still counts.
+        first = text.strip().splitlines()[0] if text.strip() else ""
+        bare = re.findall(r"\b(PASS|FAIL)\b", first, re.IGNORECASE)
+        if bare:
+            return bare[-1].upper() == "PASS", reason or "the judge gave no reason"
+        return True, NO_VERDICT
+    problems = []
+    if leads == "no":
+        problems.append("it does not lead to the reply")
+    if paraphrase == "yes":
+        problems.append("it restates the reply")
+    if leans == "yes":
+        problems.append("it leans on the recollection more than the reply does")
+    if problems:
+        return False, f"{'; '.join(problems)} ({reason})" if why else "; ".join(problems)
+    return True, reason or "passed"
 
 
 class PromptManager:
@@ -123,30 +164,45 @@ class PromptManager:
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages)
+        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages, max_tokens=400)
         return str(response.choices[0].message.content).strip()
 
     def reasoning_trace(
-        self, question: str, answer: str, memories: str, prev_answer: str, author: str
+        self, question: str, answer: str, memories: str, prev_answer: str, author: str,
+        objection: str = "", rejected: str = "",
     ) -> str:
         """
-        For thinking models: the private reasoning that leads from what the
-        persona recalled (and the question) to the reply it actually gave.
-        Written after the fact from the real reply, so it teaches how the
-        target moves from memory to answer rather than inventing positions.
+        For thinking models: the private reasoning that leads from the
+        question (and whatever came to mind) to the reply actually given.
+        Written after the fact from the real reply, so it carries the
+        target's position rather than the writer's; the recollection is
+        drawn on only as far as the reply itself does, never forced in.
         """
+        retry = ""
+        if objection:
+            shown = f"\n\nThe rejected attempt:\n{rejected}" if rejected else ""
+            retry = (
+                f"\n\n---\nA previous attempt was rejected: {objection}{shown}\n\n"
+                "Write it again so that it leads to the reply."
+            )
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
                 role="system",
                 content=(
-                    f"You are {author}. You are shown a question put to you, what you recalled of your "
+                    f"You are {author}. You are shown a question put to you, what came to mind from your "
                     "earlier writing, and the reply you actually gave. Write the private reasoning that "
-                    "took you from the recollection and the question to that reply, as it went through "
-                    "your head in the moment: first person, present tense, three to six sentences, "
-                    "concrete, in your own voice. Think, do not narrate -- never describe the exchange "
-                    "from outside (no 'the commenter', 'the original claim', 'my reply'). Use the "
-                    "recollection, do not repeat it; no preamble, do not restate the reply, no quotation "
-                    "marks."
+                    "took you from the question to that reply, as it went through your head in the "
+                    "moment: first person, present tense, three to six sentences, concrete, in your own "
+                    "voice. What came to mind may or may not have shaped the reply: draw on it exactly as "
+                    "far as the reply does -- if the reply builds on it, show how; if the reply does not, "
+                    "leave it aside or note in passing that it is not the point here. Never manufacture a "
+                    "link. Think, do not narrate: start from your own reaction to what they said, never "
+                    "from a description of it (no 'the commenter', 'the question tackles', 'my reply'). "
+                    "No preamble, do not restate the reply, no quotation marks.\n\n"
+                    "The voice, on an unrelated topic: Hm, they're taking the meta-analysis as settled. I "
+                    "went through those studies in 2014 and the effect sizes fell apart on replication, so "
+                    "I don't buy the premise. The real issue is the burden of proof, and that's what I "
+                    "want to push on."
                 ),
             ),
             ChatCompletionUserMessageParam(
@@ -154,13 +210,55 @@ class PromptManager:
                 content=(
                     f"Question: {question}\n\n"
                     f"Your previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
-                    f"Recalled:\n{memories or '(nothing specific came to mind)'}\n\n"
-                    f"Your reply:\n{answer}"
+                    f"What came to mind:\n{memories or '(nothing specific)'}\n\n"
+                    f"Your reply:\n{answer}{retry}"
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
+        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages, max_tokens=700)
         return str(response.choices[0].message.content).strip()
+
+    def check_trace(
+        self, question: str, memories: str, reasoning: str, answer: str, author: str, prev_answer: str = ""
+    ) -> Tuple[bool, str]:
+        """
+        Judge a reasoning trace against the reply it is meant to lead to,
+        one criterion at a time (a checklist keeps a mid-size judge honest).
+
+        Returns:
+            (passed, reason): passed when the trace reaches the reply's
+            conclusion and stance, is not a paraphrase of it, and does not
+            lean on the recollection more than the reply itself does.
+        """
+        messages: List[ChatCompletionMessageParam] = [
+            ChatCompletionSystemMessageParam(
+                role="system",
+                content=(
+                    f"You check one training example for a model of {author}. You are given a question put "
+                    "to them, what came to mind from their earlier writing, the private reasoning written "
+                    "for them, and the reply they actually gave. Answer exactly these four lines:\n"
+                    "LEADS: yes or no -- does the reasoning arrive at the reply's conclusion and stance, "
+                    "claiming nothing the reply contradicts?\n"
+                    "PARAPHRASE: yes or no -- is the reasoning mostly a restatement of the reply?\n"
+                    "LEANS: yes or no -- does the reasoning rely on what came to mind more than the reply "
+                    "itself does? (no if nothing came to mind, or the reply visibly builds on it)\n"
+                    "WHY: one sentence on the main problem, or on how the reasoning reaches the reply."
+                ),
+            ),
+            ChatCompletionUserMessageParam(
+                role="user",
+                content=(
+                    f"Question: {question}\n\n"
+                    f"Their previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
+                    f"What came to mind:\n{memories or '(nothing specific)'}\n\n"
+                    f"Reasoning:\n{reasoning}\n\nReply actually given:\n{answer}"
+                ),
+            ),
+        ]
+        response = self.client.chat.completions.create(
+            model=REASONING_MODEL, messages=messages, temperature=0, max_tokens=300
+        )
+        return parse_verdict(str(response.choices[0].message.content or ""))
 
     def contextualise_memories_for_prompt(
         self, memories: List[Dict[str, str]]

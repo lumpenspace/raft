@@ -7,8 +7,12 @@ that recall to the reply actually given.
 """
 
 import json
+import os
+import threading
 import time
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Dict, List
 
 from . import hx
 from .memories import PACE, MemoryManager, MetaDataKeyEnum
@@ -74,6 +78,7 @@ def generate_finetune(dataset: DatasetLike, thinking: bool = False) -> None:
         thinking (bool): Write reasoning traces for a thinking model.
     """
     paths = dataset_paths(dataset)
+    MemoryManager.reset_trace_stats()
     begin_json_file(paths.finetune_path)
     i = 1
     while True:
@@ -88,7 +93,92 @@ def generate_finetune(dataset: DatasetLike, thinking: bool = False) -> None:
         i += 1
 
     end_json_file(paths.finetune_path)
+    if thinking:
+        hx.say(f"reasoning traces: {MemoryManager.trace_stats}")
     hx.ok(f"generic finetune file generated in: {paths.finetune_path}")
+
+
+def _write_generic(path: Path, items: List[Any]) -> None:
+    """Replace the generic file atomically (a temp file, then a rename)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as f:
+        json.dump(items, f, indent=4)
+    os.replace(tmp, path)
+
+
+def recheck_traces(dataset: DatasetLike, regenerate: str = "recall") -> Dict[str, int]:
+    """
+    Judge every reasoning trace in the generic file against its reply and
+    rewrite the ones that fail, without redoing retrieval. A trace that no
+    attempt could replace is kept aside as "reasoning_previous" (never
+    lost) while "reasoning" is emptied to recall-only; the file is written
+    after every conversation, atomically, so an interrupted run keeps its
+    progress. Conversations are independent, so RAFT_WORKERS of them run
+    at once (default 1).
+
+    Args:
+        regenerate: which existing traces to discard before judging --
+            "none" (judge all as they are), "recall" (examples that carry
+            recall, whose traces predate the rule about leaning on it only
+            as far as the reply does), or "all" (a new writer, say).
+    """
+    if regenerate not in ("none", "recall", "all"):
+        raise ValueError(f"regenerate must be none, recall or all, not {regenerate!r}")
+    paths = dataset_paths(dataset)
+    try:
+        with paths.finetune_path.open() as f:
+            items = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{paths.finetune_path} is not complete JSON ({e}); a run may still be writing it -- "
+            f"finish or rerun `{paths.command('ft:gen')}` first"
+        ) from e
+    MemoryManager.reset_trace_stats()
+
+    # Group the flat file into conversations: a metadata item and its examples.
+    groups: List[tuple] = []
+    for item in items:
+        if "metadata" in item:
+            groups.append((item["metadata"], []))
+        elif groups and item.get("example", {}).get("answer"):
+            groups[-1][1].append(item["example"])
+
+    write_lock = threading.Lock()
+    done = {"conversations": 0, "checked": 0}
+
+    def process(group: tuple) -> int:
+        meta, examples = group
+        manager = MemoryManager(paths, {MetaDataKeyEnum(k): meta[k] for k in ("participants", "date", "url") if k in meta})
+        prev_answer = ""
+        for example in examples:
+            memories = example.get("similar_memories", "")
+            previous = example.get("reasoning", "")
+            discard = regenerate == "all" or (regenerate == "recall" and memories)
+            hx.step(" ".join(example["question"].split())[:100])
+            trace = manager.reasoning_trace(
+                example["question"], example["answer"], memories, prev_answer, existing="" if discard else previous
+            )
+            if previous and trace != previous:
+                example["reasoning_previous"] = previous
+            example["reasoning"] = trace
+            prev_answer = example["answer"]
+        with write_lock:
+            done["conversations"] += 1
+            done["checked"] += len(examples)
+            _write_generic(paths.finetune_path, items)
+            hx.say(f"  {done['conversations']}/{len(groups)} conversation(s) re-judged")
+        return len(examples)
+
+    workers = max(1, int(os.environ.get("RAFT_WORKERS", "1")))
+    if workers == 1:
+        for group in groups:
+            process(group)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(process, groups))
+    _write_generic(paths.finetune_path, items)
+    hx.ok(f"{done['checked']} reasoning trace(s) checked: {MemoryManager.trace_stats}")
+    return dict(MemoryManager.trace_stats)
 
 
 def generate_benchmark(dataset: DatasetLike, thinking: bool = False) -> None:

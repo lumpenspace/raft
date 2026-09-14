@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Union, Any
 from enum import Enum
 import os
+import threading
 import time
 import re
 from datetime import datetime
@@ -16,7 +17,7 @@ from openai.types.chat import (
 )
 
 from . import hx
-from .prompt_manager import PromptManager
+from .prompt_manager import NO_VERDICT, PromptManager
 from .embeddings_helpers import get_embedding, store_exchange_embedding
 from .sources import date_num
 from .project import DatasetLike, dataset_paths
@@ -294,9 +295,85 @@ class MemoryManager:
             )
         return summaries
 
-    def reasoning_trace(self, question: str, answer: str, memories: str, prev_answer: str) -> str:
-        """For thinking models: the reasoning from recall to the real reply."""
-        return self.prompt_manager.reasoning_trace(question, answer, memories, prev_answer, author=self.name)
+    # One write plus this many rewrites before a trace is given up on.
+    TRACE_REWRITES = 2
+    # A trace that describes the exchange from outside is not thinking; caught
+    # before the judge is asked (the judge decides on the last attempt).
+    NARRATION = re.compile(
+        r"\b(the (commenter|questioner|poster|user|interlocutor)|"
+        r"the (original|current) (claim|reaction|post|comment|question|query)|"
+        r"the question (tackles|raises|challenges|asks)|the recalled|the recollection reminded)\b",
+        re.IGNORECASE,
+    )
+    # Tally of the current run; reset by the callers that report it.
+    trace_stats: Dict[str, int] = {"passed": 0, "rewritten": 0, "dropped": 0, "unjudged": 0}
+    _stats_lock = threading.Lock()
+
+    @classmethod
+    def reset_trace_stats(cls) -> None:
+        with cls._stats_lock:
+            for key in cls.trace_stats:
+                cls.trace_stats[key] = 0
+
+    @classmethod
+    def _tally(cls, key: str) -> None:
+        with cls._stats_lock:
+            cls.trace_stats[key] += 1
+
+    def reasoning_trace(
+        self, question: str, answer: str, memories: str, prev_answer: str, existing: str = ""
+    ) -> str:
+        """
+        For thinking models: the reasoning from the question (and recall)
+        to the real reply -- judged against the reply, rewritten with the
+        objection when it fails, and dropped (recall only) when it still
+        fails. An `existing` trace is judged first and kept if it passes.
+        A helper failure counts as a rejection; it never ends the run.
+        """
+        objection = rejected = ""
+        trace = existing
+        attempts = self.TRACE_REWRITES + 1 + (1 if existing else 0)
+        for attempt in range(attempts):
+            if not trace:
+                try:
+                    trace = self.prompt_manager.reasoning_trace(
+                        question, answer, memories, prev_answer, author=self.name,
+                        objection=objection, rejected=rejected if objection else "",
+                    )
+                except Exception as e:  # noqa: BLE001 -- one lost call must not end a long run
+                    hx.warn(f"reasoning trace call failed: {e}")
+                    trace = ""
+                if not trace.strip():
+                    objection, rejected = "the writer returned nothing", ""
+                    continue
+            narrated = self.NARRATION.search(trace)
+            last = attempt == attempts - 1
+            if narrated and not last:
+                passed, why = False, (
+                    f"it narrates the exchange from outside ('{narrated.group(0)}'); "
+                    "think in the first person, in the moment"
+                )
+            else:
+                try:
+                    passed, why = self.prompt_manager.check_trace(
+                        question, memories, trace, answer, author=self.name, prev_answer=prev_answer
+                    )
+                except Exception as e:  # noqa: BLE001
+                    hx.warn(f"trace judge call failed: {e}")
+                    passed, why = False, "the judge could not be reached"
+            if passed:
+                if why == NO_VERDICT:
+                    self._tally("unjudged")
+                    hx.warn("the judge gave no verdict; keeping the trace")
+                else:
+                    self._tally("rewritten" if attempt else "passed")
+                return trace
+            objection, rejected = why or "the judge rejected it", trace
+            hx.say(f"reasoning trace rejected ({objection[:120]}); rewriting")
+            trace = ""
+        self._tally("dropped")
+        hx.warn("no reasoning trace led to the reply; keeping the recall only")
+        return ""
 
     def ask_question(self, question: str, model: str = "gpt-4-turbo", thinking: bool = False) -> str:
         """

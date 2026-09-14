@@ -252,3 +252,178 @@ def test_text_about_special_tokens_chunks_and_counts(project):
     [(meta, chunk)] = [json.loads(line) for line in project.chunks_path.read_text().splitlines()]
     assert "<|endoftext|>" in chunk and meta["title"] == "t"
     assert oai_finetune.count_tokens({"content": "<|endoftext|>"}) > 0
+
+
+def _manager():
+    manager = MemoryManager.__new__(MemoryManager)
+    manager.name = "sam"
+    manager.prompt_manager = PromptManager()
+    MemoryManager.reset_trace_stats()
+    return manager
+
+
+def test_trace_is_judged_and_rewritten_with_the_objection():
+    manager = _manager()
+    verdicts = iter([(False, "it leans on the recollection the reply never uses"), (True, "reaches it")])
+    with patch.object(PromptManager, "reasoning_trace", side_effect=["bad", "good"]) as write, \
+         patch.object(PromptManager, "check_trace", side_effect=lambda *a, **k: next(verdicts)), \
+         patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "m", "") == "good"
+    assert write.call_args_list[0].kwargs["objection"] == ""
+    assert "never uses" in write.call_args_list[1].kwargs["objection"]
+    assert write.call_args_list[1].kwargs["rejected"] == "bad"  # the retry sees what was rejected
+    assert MemoryManager.trace_stats == {"passed": 0, "rewritten": 1, "dropped": 0, "unjudged": 0}
+
+
+def test_trace_that_never_leads_to_the_reply_is_dropped():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", return_value="bad") as write, \
+         patch.object(PromptManager, "check_trace", return_value=(False, "drifts")), \
+         patch("raft.memories.hx.say"), patch("raft.memories.hx.warn"):
+        assert manager.reasoning_trace("q", "a", "", "") == ""
+    assert write.call_count == MemoryManager.TRACE_REWRITES + 1
+    assert MemoryManager.trace_stats["dropped"] == 1
+
+
+def test_existing_trace_is_kept_when_it_passes():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace") as write, \
+         patch.object(PromptManager, "check_trace", return_value=(True, "fine")):
+        assert manager.reasoning_trace("q", "a", "", "", existing="old") == "old"
+    write.assert_not_called()
+
+
+def test_check_trace_parses_the_checklist():
+    from raft.prompt_manager import NO_VERDICT, parse_verdict
+
+    assert parse_verdict("LEADS: yes\nPARAPHRASE: no\nLEANS: no\nWHY: it reaches the reply via latency.") == (True, "it reaches the reply via latency.")
+    passed, why = parse_verdict("LEADS: Yes\nPARAPHRASE: no\nLEANS: **yes**\nWHY: the reply never uses the recollection.")
+    assert not passed and why.startswith("it leans on the recollection") and "never uses" in why
+    passed, why = parse_verdict("LEADS: no\nPARAPHRASE: yes\nLEANS: no")
+    assert not passed and why == "it does not lead to the reply; it restates the reply"
+    # decorated, numbered and bulleted checklists all parse
+    assert parse_verdict("1. LEADS: yes\n2. PARAPHRASE: no\n3. LEANS: no\n4. WHY: ok")[0]
+    assert parse_verdict("- **LEADS**: yes\n- **PARAPHRASE**: no\n- **LEANS**: no\n- **WHY**: ok") == (True, "ok")
+    assert not parse_verdict("**LEADS:** no\n**PARAPHRASE:** no\n**LEANS:** no\n**WHY:** drifts")[0]
+    # a bare verdict on the first line, decorated or labelled, still counts
+    assert parse_verdict("**PASS**\nIt reaches the reply.")[0]
+    assert parse_verdict("Verdict: PASS\nGood one.")[0]
+    assert not parse_verdict("PASS/FAIL: FAIL\nno")[0] and not parse_verdict("FAIL: drifts")[0]
+    # no verdict at all is not a rejection
+    assert parse_verdict("") == (True, NO_VERDICT)
+    assert parse_verdict("LEADS: yes") == (True, NO_VERDICT)  # a partial checklist is no checklist
+    manager = PromptManager()
+    with patch.object(PromptManager, "client") as client:
+        client.chat.completions.create.return_value.choices[0].message.content = "LEADS: yes\nPARAPHRASE: no\nLEANS: no\nWHY: ok"
+        assert manager.check_trace("q", "m", "r", "a", author="Sam", prev_answer="p") == (True, "ok")
+        call = client.chat.completions.create.call_args.kwargs
+        assert call["temperature"] == 0 and "LEANS:" in call["messages"][0]["content"]
+        assert "for context:\np" in call["messages"][1]["content"]
+
+
+def test_unjudged_traces_are_kept_and_counted():
+    from raft.prompt_manager import NO_VERDICT
+
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", return_value="Hm, fine."), \
+         patch.object(PromptManager, "check_trace", return_value=(True, NO_VERDICT)), patch("raft.memories.hx.warn"):
+        assert manager.reasoning_trace("q", "a", "", "") == "Hm, fine."
+    assert MemoryManager.trace_stats["unjudged"] == 1 and MemoryManager.trace_stats["passed"] == 0
+
+
+def test_a_helper_failure_is_a_rejection_not_a_crash():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", side_effect=[RuntimeError("502"), "Hm, ok."]) as write, \
+         patch.object(PromptManager, "check_trace", return_value=(True, "fine")), \
+         patch("raft.memories.hx.warn"), patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "", "") == "Hm, ok."
+    assert write.call_args_list[1].kwargs["objection"] == "the writer returned nothing"
+    with patch.object(PromptManager, "reasoning_trace", return_value="Hm, ok."), \
+         patch.object(PromptManager, "check_trace", side_effect=RuntimeError("timeout")), \
+         patch("raft.memories.hx.warn"), patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "", "") == ""
+    assert MemoryManager.trace_stats["dropped"] == 1
+
+
+def test_judge_receives_trace_and_reply_in_the_right_slots():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", return_value="TRACE"), \
+         patch.object(PromptManager, "check_trace", return_value=(True, "ok")) as judge:
+        manager.reasoning_trace("Q", "REPLY", "MEM", "PREV")
+    assert judge.call_args.args == ("Q", "MEM", "TRACE", "REPLY") and judge.call_args.kwargs["prev_answer"] == "PREV"
+
+
+def test_narrated_trace_is_rewritten_before_the_judge_is_asked():
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", side_effect=["The commenter brings up decaf.", "Hm, decaf is bad."]) as write, \
+         patch.object(PromptManager, "check_trace", return_value=(True, "ok")) as judge, patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "", "") == "Hm, decaf is bad."
+    assert judge.call_count == 1  # the narrated attempt never reached the judge
+    assert "narrates" in write.call_args_list[1].kwargs["objection"] and "the commenter" in write.call_args_list[1].kwargs["objection"].lower()
+    # on the last attempt the judge decides, so a legitimate mention does not cost the trace
+    manager = _manager()
+    with patch.object(PromptManager, "reasoning_trace", return_value="The commenter is right, and so am I."), \
+         patch.object(PromptManager, "check_trace", return_value=(True, "ok")) as judge, patch("raft.memories.hx.say"):
+        assert manager.reasoning_trace("q", "a", "", "") == "The commenter is right, and so am I."
+    assert judge.call_count == 1
+
+
+def test_recheck_regenerates_traces_with_recall_and_judges_the_rest(project, monkeypatch):
+    project.finetune_path.parent.mkdir(parents=True, exist_ok=True)
+    project.finetune_path.write_text(json.dumps([
+        {"metadata": {"participants": {"q": "Pat", "a": "Sam"}, "date": "2024-05-01", "url": "u", "context": "an interview"}},
+        {"example": {"question": "Why?", "answer": "Because.", "similar_memories": "from 2023: I said so.", "reasoning": "old-with-recall"}},
+        {"example": {"question": "And?", "answer": "So.", "reasoning": "old-plain"}},
+    ]))
+    calls = []
+
+    def trace(self, question, answer, memories, prev_answer, existing=""):
+        calls.append((question, existing, prev_answer))
+        return existing or "fresh"
+
+    with patch.object(MemoryManager, "__init__", lambda self, *a, **k: None), patch.object(MemoryManager, "reasoning_trace", trace):
+        generate_finetune.recheck_traces(project)
+    assert calls == [("Why?", "", ""), ("And?", "old-plain", "Because.")]
+    rows = json.loads(project.finetune_path.read_text())
+    assert rows[1]["example"]["reasoning"] == "fresh" and rows[1]["example"]["reasoning_previous"] == "old-with-recall"
+    assert rows[2]["example"]["reasoning"] == "old-plain" and "reasoning_previous" not in rows[2]["example"]
+    # a trace no attempt could replace is kept aside, never lost
+    with patch.object(MemoryManager, "__init__", lambda self, *a, **k: None), patch.object(MemoryManager, "reasoning_trace", return_value=""):
+        generate_finetune.recheck_traces(project, regenerate="all")
+    rows = json.loads(project.finetune_path.read_text())
+    assert rows[1]["example"]["reasoning"] == "" and rows[1]["example"]["reasoning_previous"] == "fresh"
+    assert not project.finetune_path.with_suffix(".json.tmp").exists()
+    calls.clear()
+    with patch.object(MemoryManager, "__init__", lambda self, *a, **k: None), patch.object(MemoryManager, "reasoning_trace", trace):
+        generate_finetune.recheck_traces(project, regenerate="all")
+    assert [c[1] for c in calls] == ["", ""]  # every trace written afresh
+    monkeypatch.chdir(project.root)
+    monkeypatch.setattr("sys.argv", ["raft", "ft:gen", "--rewrite-traces"])
+    with patch.object(generate_finetune, "recheck_traces") as recheck, patch.object(oai_finetune, "create_openai_finetune_file") as convert:
+        cli.main()
+    assert recheck.call_args.kwargs["regenerate"] == "all"
+    assert convert.call_args.kwargs["thinking"] is True
+    assert state.load_meta(project)["thinking"] is True  # a re-check is a thinking dataset from now on
+
+
+def test_recheck_runs_conversations_in_parallel(project, monkeypatch):
+    project.finetune_path.parent.mkdir(parents=True, exist_ok=True)
+    items = []
+    for n in range(4):
+        items.append({"metadata": {"participants": {"q": "Pat", "a": "Sam"}, "date": f"2024-0{n + 1}-01", "url": "u"}})
+        items.append({"example": {"question": f"q{n}", "answer": f"a{n}", "reasoning": "old"}})
+        items.append({"example": {"question": f"q{n}b", "answer": f"a{n}b", "reasoning": "old"}})
+    project.finetune_path.write_text(json.dumps(items))
+    monkeypatch.setenv("RAFT_WORKERS", "3")
+    seen = []
+
+    def trace(self, question, answer, memories, prev_answer, existing=""):
+        seen.append((question, prev_answer))
+        return "new"
+
+    with patch.object(MemoryManager, "__init__", lambda self, *a, **k: None), patch.object(MemoryManager, "reasoning_trace", trace):
+        stats = generate_finetune.recheck_traces(project, regenerate="all")
+    rows = json.loads(project.finetune_path.read_text())
+    assert all(r["example"]["reasoning"] == "new" and r["example"]["reasoning_previous"] == "old" for r in rows if "example" in r)
+    assert sorted(seen) == sorted([(f"q{n}", "") for n in range(4)] + [(f"q{n}b", f"a{n}") for n in range(4)])
+    assert isinstance(stats, dict)
