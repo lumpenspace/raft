@@ -12,6 +12,18 @@ from openai.types.chat import (
 # The memory summarizer's model: the same knob as the conversation
 # structurer, so one OpenAI-compatible endpoint serves the whole prep.
 SUMMARY_MODEL = os.environ.get("RAFT_LLM_MODEL", "gpt-4o")
+# The reasoning traces are one call per exchange (summaries are five) and
+# carry the persona's voice, so they may use a stronger model.
+REASONING_MODEL = os.environ.get("RAFT_REASONING_MODEL", SUMMARY_MODEL)
+
+# The previous reply is context, not material: a few hundred characters
+# orient the summariser; the full reply would dominate every prompt.
+CONTEXT_CHARS = 800
+
+
+def _context(text: str) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= CONTEXT_CHARS else text[:CONTEXT_CHARS].rstrip() + " [...]"
 
 
 class PromptManager:
@@ -86,7 +98,7 @@ class PromptManager:
                 role="user",
                 content=(
                     f"Question: {question}\n\n"
-                    f"Your previous reply in this conversation, for context:\n{prev_answer or '(none)'}\n\n"
+                    f"Your previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
                     f"Earlier material:\n{memory}"
                 ),
             ),
@@ -118,13 +130,13 @@ class PromptManager:
                 role="user",
                 content=(
                     f"Question: {question}\n\n"
-                    f"Your previous reply in this conversation, for context:\n{prev_answer or '(none)'}\n\n"
+                    f"Your previous reply in this conversation, for context:\n{_context(prev_answer) or '(none)'}\n\n"
                     f"Recalled:\n{memories or '(nothing specific came to mind)'}\n\n"
                     f"Your reply:\n{answer}"
                 ),
             ),
         ]
-        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages)
+        response = self.client.chat.completions.create(model=REASONING_MODEL, messages=messages)
         return str(response.choices[0].message.content).strip()
 
     def contextualise_memories_for_prompt(

@@ -215,13 +215,17 @@ class MemoryManager:
             Dict[str, str]: Summarized memory with date.
         """
         prompt_manager = self.prompt_manager
-        summary = prompt_manager.summarize_memory(
-            memory["document"],
-            question,
-            prev_answer,
-            author=self.name,
-            useful_check=not no_useful_check,
-        )
+        try:
+            summary = prompt_manager.summarize_memory(
+                memory["document"],
+                question,
+                prev_answer,
+                author=self.name,
+                useful_check=not no_useful_check,
+            )
+        except Exception as e:  # one lost recollection must not end a long run
+            hx.warn(f"memory summary failed, skipping it: {e}")
+            return {"date": memory["date"], "memory": ""}
         # A summariser that says "skip" and then keeps talking has still
         # decided to skip; only a recollection that starts as one counts.
         if re.match(r"^\W*skip\b", summary, re.IGNORECASE):

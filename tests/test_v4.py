@@ -176,3 +176,26 @@ def test_serve_chats_with_a_local_model_behind_an_endpoint(project, monkeypatch)
         monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8080/v1")
         serve.run_serve(project, standalone=False)
         manager.assert_called_once()
+
+
+def test_prompts_trim_the_previous_reply_and_pick_the_reasoning_model(monkeypatch):
+    from raft import prompt_manager as pm
+
+    long_reply = "word " * 500
+    manager = PromptManager()
+    with patch.object(PromptManager, "client") as client:
+        client.chat.completions.create.return_value.choices[0].message.content = "ok"
+        manager.summarize_memory("m", "q", long_reply, author="Sam")
+        sent = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "[...]" in sent and len(sent) < 1200
+        manager.reasoning_trace("q", "a", "", long_reply, author="Sam")
+        assert client.chat.completions.create.call_args.kwargs["model"] == pm.REASONING_MODEL
+    assert pm.REASONING_MODEL == pm.SUMMARY_MODEL  # defaults to the summariser's model
+
+
+def test_a_failed_summary_is_skipped_not_fatal():
+    manager = MemoryManager.__new__(MemoryManager)
+    manager.name = "sam"
+    manager.prompt_manager = PromptManager()
+    with patch.object(PromptManager, "summarize_memory", side_effect=RuntimeError("500")), patch("raft.memories.hx.warn"):
+        assert manager.summarize_memory({"date": "2024-01-01", "document": "d"}, "q", "") == {"date": "2024-01-01", "memory": ""}
