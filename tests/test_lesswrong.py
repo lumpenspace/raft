@@ -200,3 +200,26 @@ def test_write_transcripts_one_dated_conversation_each(project):
     assert first["date"] == "2024-01-01" and first["participants"]["q"] == "EA Forum commenters"
     assert first["context"] == 'an EA Forum comment thread under the post "First"'
     assert second["participants"] == {"q": "Bo", "a": "T"} and second["url"] == "u2"
+
+
+def test_older_comments_become_grounding_with_their_reply_context(project):
+    summary = lesswrong.import_lesswrong(project, "https://lw", "T", role="auto", max_conversations=1,
+                                         older_comments_as_grounding=True)
+    # the newest branch (c2, c3) is the one conversation; c1 is older and becomes grounding, c4 stays a quick take
+    assert summary["transcripts"] == 1 and summary["exchanges"] == 2
+    docs = read_jsonl(project.corpus_path)
+    assert sorted(d["title"] for d in docs) == sorted(["Own post", "T's Shortform, 2024-04-01", 'comment on "A\'s post", 2024-01-01'])
+    older = next(d for d in docs if d["title"].startswith("comment on"))
+    assert older["content"].startswith('Commenting on "A\'s post" by A:\n\nTop-level take')
+    assert older["date"] == "2024-01-01" and older["link"].endswith("commentId=c1")
+    # conversation answers never leak into grounding
+    assert not any("Reply to A on my post" in d["content"] for d in docs)
+
+
+def test_reply_context_comes_from_the_parent():
+    parent = comment("a9", A, "p1", None, "2024-01-01", "A long parent " * 40)
+    child = comment("c9", T, "p1", "a9", "2024-01-02", "My answer.")
+    [record] = lesswrong.comment_records([child], {"a9": parent})
+    assert record["content"].startswith("Replying to A (A long parent")
+    assert "[...]" in record["content"] and record["content"].endswith("):\n\nMy answer.")
+    assert len(record["content"]) < 400
