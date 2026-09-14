@@ -72,7 +72,7 @@ def phase_details(status: dict) -> List[str]:
     """One status line per phase, aligned with PHASES."""
     model = status["model"]
     return [
-        f"{status['corpus_docs']} document(s), {status['transcripts']} transcript file(s)",
+        f"{status['corpus_docs']} document(s), {status['transcripts']} conversation(s)",
         (
             f"{status['chunks']} chunk(s), "
             f"embedded: {'yes' if status['embedded'] else 'no'}, "
@@ -264,7 +264,7 @@ def phase_gather(name: DatasetLike, target: str) -> None:
         except (requests.RequestException, ET.ParseError, ValueError, RuntimeError, OSError) as exc:
             hx.warn(f"source skipped: {exc}")
     status = state.dataset_status(name)
-    hx.say(f"{status['corpus_docs']} grounding document(s), {status['transcripts']} transcript file(s)")
+    hx.say(f"{status['corpus_docs']} grounding document(s), {status['transcripts']} conversation(s)")
 
 
 def phase_prep(name: str) -> None:
@@ -287,8 +287,14 @@ def phase_prep(name: str) -> None:
     if confirm(
         "Generate the finetune examples now?"
     ):
-        generate_finetune.generate_finetune(name)
-        oai_finetune.create_openai_finetune_file(name)
+        thinking = confirm(
+            "Format for a thinking model? (recall and a reasoning trace go in <think> blocks; "
+            "Qwen3 and friends)",
+            default=bool(state.load_meta(name).get("thinking")),
+        )
+        state.update_meta(name, thinking=thinking)
+        generate_finetune.generate_finetune(name, thinking=thinking)
+        oai_finetune.create_openai_finetune_file(name, thinking=thinking)
 
 
 def collect_test_questions(name: str, when: str = "") -> None:
@@ -421,8 +427,9 @@ def phase_eval(name: str) -> None:
         "Generate the benchmark files from the benchmark transcript?",
         default=not dataset_paths(name).benchmark_openai_path.exists(),
     ):
-        generate_finetune.generate_benchmark(name)
-        oai_finetune.create_openai_finetune_file(name, "benchmark")
+        thinking = bool(state.load_meta(name).get("thinking"))
+        generate_finetune.generate_benchmark(name, thinking=thinking)
+        oai_finetune.create_openai_finetune_file(name, "benchmark", thinking=thinking)
         ran_something = True
 
     questions = state.test_questions(name)
@@ -439,10 +446,11 @@ def phase_eval(name: str) -> None:
         )
     elif confirm(f"Run {len(questions)} test question(s) against {model}?"):
         manager = MemoryManager(name, {})
+        thinking = bool(state.load_meta(name).get("thinking"))
         for question in questions:
             hx.step(question)
             serve.show_context(name, question)
-            answer = manager.ask_question(question, model=model)
+            answer = manager.ask_question(question, model=model, thinking=thinking)
             print(f"\nQ: {question}\nA: {answer}\n")
         ran_something = True
 

@@ -316,20 +316,23 @@ class TestTweetMode(TempCwdTestCase):
         self.assertEqual(len(self.read_jsonl("data/tw.jsonl")), 1)
         self.assertFalse(os.path.exists("data/tw_transcript_1.json"))
 
-    def test_conversations_are_not_duplicated_into_grounding(self):
+    def test_each_thread_is_its_own_dated_conversation(self):
         import_documents("tw", self.documents(3), "gary")
         corpus = self.read_jsonl("data/tw.jsonl")
         self.assertEqual(corpus, [])
+        self.assertEqual(next_transcript_index("tw"), 4)
         transcript = self.read_json("data/tw_transcript_1.json")
-        self.assertEqual(len(transcript["exchanges"]), 3)
-        self.assertEqual(transcript["participants"]["a"], "gary")
+        self.assertEqual(len(transcript["exchanges"]), 1)
+        self.assertEqual(transcript["participants"], {"q": "rando", "a": "gary"})
+        self.assertEqual(transcript["context"], "a reply thread on X")
+        self.assertTrue(transcript["url"].startswith("https://x.com/"))
 
     def test_duplicate_documents_are_dropped(self):
         docs = self.documents(2)
         import_documents("tw", docs + docs, "gary")
         corpus = self.read_jsonl("data/tw.jsonl")
         self.assertEqual(corpus, [])
-        self.assertEqual(len(self.read_json("data/tw_transcript_1.json")["exchanges"]), 2)
+        self.assertEqual(next_transcript_index("tw"), 3)
 
 
 class TestOpbdhFlagParsing(TempCwdTestCase):

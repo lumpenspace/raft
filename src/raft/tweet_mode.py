@@ -22,10 +22,6 @@ ARIADNE_INSTALL_HINT = (
     "  pip install ariadne-x"
 )
 
-# Tweet conversations are short; batch them so generate_finetune doesn't
-# crawl through hundreds of one-exchange transcript files.
-EXCHANGES_PER_TRANSCRIPT = 40
-
 
 def load_ariadne():
     """Import ariadne, or exit with an install hint."""
@@ -109,8 +105,9 @@ def import_documents(
     seen_ids = set()
     records: List[Dict[str, Any]] = []
 
-    all_exchanges: List[List[str]] = []
-    first_date = ""
+    # One transcript per thread, each with its own date: what the persona
+    # may recall while replying is everything dated before it.
+    threads: List[Dict[str, Any]] = []
 
     for doc in documents:
         meta = doc.get("metadata", {})
@@ -121,7 +118,8 @@ def import_documents(
 
         text = (doc.get("text") or "").strip()
         date = iso_date(meta.get("target_created_at"))
-        exchanges, _ = messages_to_exchanges(
+        url = meta.get("target_url") or ""
+        exchanges, questioner = messages_to_exchanges(
             normalize_messages(doc.get("messages") or [], handle), handle
         )
         destination = document_dataset_role(doc, exchanges) if role == "auto" else role
@@ -130,40 +128,49 @@ def import_documents(
             records.append(
                 {
                     "title": f"tweet thread {meta.get('target_id', doc_id)}",
-                    "link": meta.get("target_url") or "",
+                    "link": url,
                     "date": date or "unknown",
                     "content": text,
                 }
             )
 
         elif destination == "conversation":
-            if exchanges and not first_date:
-                first_date = date
-            all_exchanges.extend(exchanges)
             if not exchanges:
                 hx.warn(
                     f"conversation row {doc_id} had no usable target exchange; skipped"
                 )
+                continue
+            network = "Bluesky" if "bsky.app" in url else "X"
+            threads.append(
+                {
+                    "date": date or "unknown",
+                    "url": url or ("https://bsky.app" if network == "Bluesky" else "https://x.com"),
+                    "questioner": questioner or f"{network} interlocutors",
+                    "context": f"a reply thread on {network}",
+                    "exchanges": exchanges,
+                }
+            )
 
     n_docs = append_corpus_records(paths, records)
 
-    n_transcripts = 0
-    for start in range(0, len(all_exchanges), EXCHANGES_PER_TRANSCRIPT):
-        batch = all_exchanges[start : start + EXCHANGES_PER_TRANSCRIPT]
+    threads.sort(key=lambda t: t["date"] if t["date"] != "unknown" else "")
+    n_exchanges = 0
+    for thread in threads:
         write_transcript(
             paths,
-            {"q": "Twitter interlocutors", "a": target},
-            first_date or "unknown",
-            "https://x.com",
-            batch,
+            {"q": thread["questioner"], "a": target},
+            thread["date"],
+            thread["url"],
+            thread["exchanges"],
+            context=thread["context"],
         )
-        n_transcripts += 1
+        n_exchanges += len(thread["exchanges"])
 
     hx.ok(
         f"imported {n_docs} grounding documents into {paths.corpus_path} and "
-        f"{len(all_exchanges)} exchanges into {n_transcripts} transcript file(s)"
+        f"{n_exchanges} exchanges into {len(threads)} conversation(s)"
     )
-    if n_docs and not all_exchanges:
+    if n_docs and not threads:
         hx.warn(
             f"no question/answer pairs were found. Those threads are\n"
             f"  probably {handle or target} talking to themselves, which makes good\n"

@@ -81,7 +81,7 @@ def test_fetched_interview_never_enters_grounding(project):
 def test_conversations_only_prep_generates_actual_training_file(project, legacy):
     dataset = DatasetPaths.legacy("sam", project.root) if legacy else project
     write_transcript(dataset, {"q": "Pat", "a": "Sam"}, "2024-01-01", "", [["Why?", "Because."]])
-    with patch("raft.flows.confirm", return_value=True), \
+    with patch("raft.flows.confirm", side_effect=lambda prompt, default=True: "thinking" not in prompt), \
          patch("raft.files_helper.chunker") as chunk, \
          patch("raft.embeddings_helpers.store_grounding_embeddings") as embed, \
          patch("raft.memories.OpenAI") as client, \

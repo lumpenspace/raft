@@ -1,4 +1,5 @@
 from openai import OpenAI
+import os
 import time
 import json
 import tiktoken
@@ -9,7 +10,11 @@ from openai.types.chat import ChatCompletionSystemMessageParam as SystemMessageP
 
 prompt_manager = PromptManager()
 
-MAX_FINETUNE_LENGTH = 4096
+# Token budget of one training example (the exchange plus as much of the
+# conversation before it as fits). 4096 was the 2023 finetuning window;
+# every model raft targets now takes far more, so the default is 8192 and
+# RAFT_MAX_EXAMPLE_TOKENS raises it further.
+MAX_FINETUNE_LENGTH = int(os.environ.get("RAFT_MAX_EXAMPLE_TOKENS", "8192"))
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 _client = None
 
@@ -34,15 +39,33 @@ def count_tokens(prompt: object) -> int:
     return len(encoding.encode(json.dumps(prompt)))
 
 
+def think_block(example: Dict[str, Any]) -> str:
+    """
+    The persona's thinking before a reply: first the recall (the retrieved
+    first-person summaries of earlier writing and conversations), then the
+    reasoning from that recall to the reply.
+    """
+    memories = (example.get("similar_memories") or "").strip()
+    recall = (
+        f"Recalling what I have written before:\n{memories}"
+        if memories
+        else "Nothing I have written before bears on this directly."
+    )
+    reasoning = (example.get("reasoning") or "").strip()
+    body = f"{recall}\n\n{reasoning}" if reasoning else recall
+    return f"<think>\n{body}\n</think>\n\n"
+
+
 def oaify_example(
-    example: Dict[str, Any], participants: Dict[str, str]
+    example: Dict[str, Any], participants: Dict[str, str], thinking: bool = False
 ) -> Tuple[List[Union[Dict[str, Any], SystemMessageParam]], int]:
     """
-    Convert an example to OpenAI format.
+    Convert an example to chat messages.
 
-    Args:
-        example (Dict[str, Any]): The example to convert.
-        participants (Dict[str, str]): The participants information.
+    Non-thinking format: the recalled memories arrive as a system note
+    between the question and the reply. Thinking format: they are the
+    opening of the reply's <think> block, followed by the reasoning trace,
+    then the reply -- what the model is expected to do at inference.
 
     Returns:
         Tuple[List[Union[Dict[str, Any], SystemMessageParam]], int]:
@@ -57,18 +80,22 @@ def oaify_example(
             "name": q_name.replace(" ", ""),
         }
     ]
-    if "similar_memories" in example:
-        result.append(
-            SystemMessageParam(
-                role="system",
-                content=f"Relevant memories: {example['similar_memories']}",
+    if thinking:
+        answer = think_block(example) + example["answer"]
+    else:
+        answer = example["answer"]
+        if "similar_memories" in example:
+            result.append(
+                SystemMessageParam(
+                    role="system",
+                    content=f"Relevant memories: {example['similar_memories']}",
+                )
             )
-        )
 
     result.append(
         {
             "role": "assistant",
-            "content": example["answer"],
+            "content": answer,
             "name": a_name.replace(" ", ""),
         }
     )
@@ -146,14 +173,16 @@ def run_oai_finetune(
 
 
 def create_openai_finetune_file(
-    dataset: DatasetLike, type: str = "finetune"
+    dataset: DatasetLike, type: str = "finetune", thinking: bool = False
 ) -> List[List[Union[Dict[str, Any], SystemMessageParam]]]:
     """
-    Create an OpenAI fine-tuning file.
+    Create the chat-format training file (OpenAI's jsonl shape, which the
+    huggingface path reads too).
 
     Args:
-        name (str): The name of the fine-tuning job.
-        type (str, optional): The type of file to create. Default: "finetune".
+        dataset: Dataset name or project paths.
+        type (str, optional): "finetune" or "benchmark".
+        thinking (bool): Put recall and reasoning in <think> blocks.
 
     Returns:
         List[List[Union[Dict[str, Any], SystemMessageParam]]]:
@@ -184,28 +213,28 @@ def create_openai_finetune_file(
             questioner=meta["participants"]["q"],
             answerer=meta["participants"]["a"],
             date=meta["date"],
+            context=meta.get("context", ""),
+            thinking=thinking,
         )
 
         group_data: List[List[Union[Dict[str, Any], SystemMessageParam]]] = []
 
         for i, item in enumerate(group["examples"]):
-            print(i)
             example: List[Union[Dict[str, Any], SystemMessageParam]]
             size: int
             example_size: int = count_tokens(system_message)
-            example, size = oaify_example(item, meta["participants"])
+            example, size = oaify_example(item, meta["participants"], thinking)
             examples: List[Union[Dict[str, Any], SystemMessageParam]] = example
             example_size += size
             index = i
             if example_size < MAX_FINETUNE_LENGTH:
                 while example_size < MAX_FINETUNE_LENGTH:
                     index = index + 1
-                    print("index", index)
                     if index >= len(group["examples"]):
                         break
                     older = group["examples"][index]
 
-                    example, size = oaify_example(older, meta["participants"])
+                    example, size = oaify_example(older, meta["participants"], thinking)
                     if example_size + size < MAX_FINETUNE_LENGTH:
                         examples = example + examples
                         example_size += size

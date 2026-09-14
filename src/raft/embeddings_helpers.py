@@ -44,56 +44,38 @@ def get_embedding(text: str) -> List[float]:
     return embedding_vector
 
 
-def get_and_store_embedding(
-    exchange: Dict[str, Any], dataset: DatasetLike, metadata: Dict[str, Any]
-) -> List[float]:
+def store_exchange_embedding(
+    exchange: Dict[str, Any], dataset: DatasetLike, metadata: Dict[str, Any], embedding: List[float]
+) -> None:
     """
-    Get and store the embedding for a given exchange.
-
-    Args:
-        exchange (Dict[str, Any]): The exchange data.
-        name (str): The name of the collection.
-        metadata (Dict[str, Any]): Metadata for the embedding.
-
-    Returns:
-        List[float]: The embedding vector.
+    Remember one exchange as a conversation memory: the question and the
+    persona's answer, dated, so later conversations can recall it (the
+    earlier-writings filter applies to it like to any document).
     """
-    print("Metadata:", metadata)
-    qs = exchange.get("question", "") or exchange.get("human", "")
+    question = exchange.get("question", "")
+    answer = exchange.get("answer", "")
+    participants = metadata.get("participants") or {}
+    q_name = participants.get("q", "Q") if isinstance(participants, dict) else "Q"
+    a_name = participants.get("a", "A") if isinstance(participants, dict) else "A"
+    document = f"{q_name}: {question}\n{a_name}: {answer}" if answer else question
 
     url = metadata.get("url", "")
-    id = "".join(c for c in f"{url}{qs[:20]}" if c.isalnum()).lower()
+    id = "".join(c for c in f"{url}{question[:20]}" if c.isalnum()).lower()
 
     paths = dataset_paths(dataset)
     paths.chroma_path.mkdir(parents=True, exist_ok=True)
     chroma_client = PersistentClient(path=str(paths.chroma_path))
     collection = chroma_client.get_or_create_collection(paths.collection)
 
-    stored_embedding = collection.get(ids=id).get("embeddings")
-
-    if stored_embedding and len(stored_embedding):
-        print("Embedding found in db")
-        return list(stored_embedding[0])
-
-    print("getting embeddings")
-    embedding = get_embedding(qs)
-
-    meta: Dict[str, Any] = (
-        {
-            **metadata,
-            **{"participants": ", ".join(metadata["participants"].values())},
-        }
-        if "participants" in metadata
-        else {"source": "participants"}
-    )
+    meta: Dict[str, Any] = {
+        k: v for k, v in metadata.items() if isinstance(v, (str, int, float, bool))
+    }
+    if isinstance(participants, dict):
+        meta["participants"] = ", ".join(str(v) for v in participants.values())
+    meta["kind"] = "exchange"
     # Comparable date for the earlier-writings-only retrieval filter.
     meta["date_num"] = date_num(meta.get("date"))
-
-    # upsert, not add: add silently keeps the old record for an existing
-    # id, which would leave pre-2.3 entries without date_num forever.
-    collection.upsert(ids=id, embeddings=embedding, documents=qs, metadatas=meta)
-
-    return embedding
+    collection.upsert(ids=id, embeddings=embedding, documents=document, metadatas=meta)
 
 
 def store_grounding_embeddings(dataset: DatasetLike) -> None:

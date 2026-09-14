@@ -28,26 +28,24 @@ class PromptManager:
         return self._client
 
     def get_interview_system_message(
-        self, questioner: str, answerer: str, date: str
+        self, questioner: str, answerer: str, date: str, context: str = "", thinking: bool = False
     ) -> ChatCompletionSystemMessageParam:
         """
-        Get the system message for an interview.
-
-        Args:
-            questioner (str): The name of the questioner.
-            answerer (str): The name of the answerer.
-            date (str): The date of the interview.
-
-        Returns:
-            ChatCompletionSystemMessageParam: The system message.
+        The system message of a conversation: who the persona is, the date
+        (which bounds what it can recall), the setting, and how memories
+        reach it -- in its own thinking, or as a note before it replies.
         """
+        setting = context or "an interview"
+        if thinking:
+            how = (
+                "Before you reply, think: recall what you have written or said before that bears "
+                "on this, and work out your reply from it. Then reply as yourself."
+            )
+        else:
+            how = "Where relevant, earlier writing of yours is recalled for you before you reply."
         return ChatCompletionSystemMessageParam(
             role="system",
-            content=f"{questioner} is interviewing you, {answerer}.\
-                It is the {date}.\n\n\
-                To better answer the questions, some memories\
-                from your past writing will be retrieved if available, by the \
-                retrieve_memories function. It will be called automatically.",
+            content=f"You are {answerer}. It is {date}. This is {setting}; {questioner} is talking to you. {how}",
         )
 
     def summarize_memory(
@@ -59,43 +57,70 @@ class PromptManager:
         useful_check: bool = True,
     ) -> str:
         """
-        Summarize a memory.
-
-        Args:
-            memory (str): The memory to summarize.
-            question (str): The current question.
-            prev_answer (str): The previous answer.
-            author (str): The author's name.
-            useful_check (bool, optional): Whether to check for usefulness.\
-                Defaults to True.
-
-        Returns:
-            str: The summarized memory.
+        Turn a retrieved passage (earlier writing, or an earlier exchange)
+        into a first-person recollection the persona can draw on -- or
+        "skip" when it does not bear on the question.
         """
         if useful_check:
             instruction = (
-                "Decide whether the quote from his blog, or extract"
-                + " from previous interview presented here is helpful"
-                + " in answering the question. If it is, rephrase it"
+                "Decide whether it bears on the question. If it does, restate its relevant point in "
+                "one or two sentences, in the first person, as a recollection you could draw on "
+                "(\"I've argued that...\") -- type it directly, no preamble. If it does not, type 'skip'."
             )
         else:
-            instruction = "Read this quote and"
+            instruction = (
+                "Restate its relevant point in one or two sentences, in the first person, as a "
+                "recollection you could draw on -- type it directly, no preamble."
+            )
 
         messages: List[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
                 role="system",
-                content=f"""\
-                    You are helping {author} prepare for an interview.\n \
-                    {instruction} from his perspective, in a way that \
-                    would be helpful for answering, in one or two \
-                    sentences - type it directly, without intro. \
-                    If it is not helpful, simply type 'skip'""",
+                content=(
+                    f"You are {author}, about to reply in a conversation. Below is something you "
+                    f"wrote or said earlier. {instruction}"
+                ),
             ),
             ChatCompletionUserMessageParam(
                 role="user",
-                content=f"Previous answer, for context:\n {prev_answer}\n\n \
-                    Question: {question}\n\n \
-                    Memory: {memory}",
+                content=(
+                    f"Question: {question}\n\n"
+                    f"Your previous reply in this conversation, for context:\n{prev_answer or '(none)'}\n\n"
+                    f"Earlier material:\n{memory}"
+                ),
+            ),
+        ]
+        response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages)
+        return str(response.choices[0].message.content).strip()
+
+    def reasoning_trace(
+        self, question: str, answer: str, memories: str, prev_answer: str, author: str
+    ) -> str:
+        """
+        For thinking models: the private reasoning that leads from what the
+        persona recalled (and the question) to the reply it actually gave.
+        Written after the fact from the real reply, so it teaches how the
+        target moves from memory to answer rather than inventing positions.
+        """
+        messages: List[ChatCompletionMessageParam] = [
+            ChatCompletionSystemMessageParam(
+                role="system",
+                content=(
+                    f"You are {author}. You are shown a question put to you, what you recalled of your "
+                    "earlier writing, and the reply you actually gave. Write the private reasoning that "
+                    "took you from the recollection and the question to that reply: first person, present "
+                    "tense, three to six sentences, concrete, in your own voice. No preamble, do not "
+                    "restate the reply, no quotation marks."
+                ),
+            ),
+            ChatCompletionUserMessageParam(
+                role="user",
+                content=(
+                    f"Question: {question}\n\n"
+                    f"Your previous reply in this conversation, for context:\n{prev_answer or '(none)'}\n\n"
+                    f"Recalled:\n{memories or '(nothing specific came to mind)'}\n\n"
+                    f"Your reply:\n{answer}"
+                ),
             ),
         ]
         response = self.client.chat.completions.create(model=SUMMARY_MODEL, messages=messages)

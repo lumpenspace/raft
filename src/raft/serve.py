@@ -93,7 +93,9 @@ def run_serve(
         hx.say(HF_SERVE_RECIPE.format(adapter=model))
         return
 
-    target = state.load_meta(paths).get("target", paths.name)
+    meta = state.load_meta(paths)
+    target = meta.get("target", paths.name)
+    thinking = bool(meta.get("thinking"))
     manager = MemoryManager(paths, {})
     hx.say(f"chatting with {target} ({model}); empty line to quit")
 
@@ -102,5 +104,5 @@ def run_serve(
         if not question:
             return
         show_context(paths, question)
-        answer = manager.ask_question(question, model=model)
+        answer = manager.ask_question(question, model=model, thinking=thinking)
         print(f"\n{answer}\n")
