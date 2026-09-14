@@ -110,6 +110,15 @@ def coerce_flag_value(raw: str) -> Any:
 # Where opbdh mounts the job directory on a pod (its runner is /opbdh-run/user/run.py).
 POD_JOB_DIR = "/opbdh-run/user"
 
+# Model families whose attention runs on reference PyTorch kernels unless
+# these are installed ("correct but much slower", says transformers -- an
+# order of magnitude on a 27B). Added to the job's requirements on CUDA.
+KERNEL_REQUIREMENTS = {
+    "qwen3_5": ["flash-linear-attention"],
+    "qwen3_5_moe": ["flash-linear-attention"],
+    "qwen3_next": ["flash-linear-attention"],
+}
+
 # The Qwen3.5+ family renders an assistant turn as <think>reasoning</think>
 # content, but takes the reasoning only from a separate `reasoning_content`
 # field, which opbdh's example format has no room for. This branch, spliced
@@ -148,6 +157,40 @@ def fetch_chat_template(model: str) -> str:
             named = {t.get("name"): t.get("template") for t in template if isinstance(t, dict)}
             template = named.get("default") or next(iter(named.values()), "")
         return str(template)
+
+
+def model_type_of(model: str) -> str:
+    """The model_type from a huggingface model's config.json ("" if unknown)."""
+    try:
+        local = Path(model).expanduser()
+        if local.is_dir():
+            config = json.loads((local / "config.json").read_text(encoding="utf-8"))
+        else:
+            from huggingface_hub import hf_hub_download
+
+            config = json.loads(Path(hf_hub_download(model, "config.json")).read_text(encoding="utf-8"))
+        return str(config.get("model_type") or "")
+    except Exception:  # noqa: BLE001 -- a missing config just means no extras
+        return ""
+
+
+def add_job_requirements(job_dir: Path, model: str, extra: Optional[List[str]] = None) -> List[str]:
+    """
+    Append the fused-kernel packages a model family needs, plus any
+    `--extra-requirements`, to the job's requirements.txt. Returns what
+    was added.
+    """
+    wanted = list(KERNEL_REQUIREMENTS.get(model_type_of(model), [])) + [r for r in (extra or []) if r]
+    if not wanted:
+        return []
+    path = job_dir / "requirements.txt"
+    present = set(path.read_text(encoding="utf-8").split()) if path.is_file() else set()
+    added = [r for r in wanted if r not in present]
+    if added:
+        with path.open("a", encoding="utf-8") as f:
+            f.write("".join(f"{r}\n" for r in added))
+        hx.say(f"job requirements: adding {', '.join(added)}")
+    return added
 
 
 def thinking_chat_template(template: str) -> Optional[str]:
@@ -212,6 +255,7 @@ def prepare_finetune(dataset: DatasetLike, model: str, options: Dict[str, Any], 
     training = {key: options.pop(key) for key in list(options) if key in TRAINING_FIELDS}
     method = options.pop("method", None)
     recipe = options.pop("recipe", None)
+    extra_requirements = str(options.pop("extra_requirements", "") or "").split(",")
     if method is not None and method not in ("lora", "qlora"):
         raise ValueError("RAFT's adapter workflow supports --method lora or qlora")
     config_file = options.pop("config", options.pop("config_file", None))
@@ -256,6 +300,8 @@ def prepare_finetune(dataset: DatasetLike, model: str, options: Dict[str, Any], 
     job = ft.prepare_finetune_job(root, project)
     if state.load_meta(paths).get("thinking") and not project.chat_template:
         install_thinking_template(job.directory, model, local)
+    if not local:  # the pod installs requirements.txt; this machine's stack is its own business
+        add_job_requirements(job.directory, model, extra_requirements)
     return root, project, job, base
 
 
@@ -412,6 +458,12 @@ def run_hf_finetune(
     root, project, job, base = prepare_finetune(dataset, model, overrides)
     resources = ft.estimate_finetune_resources(project)
     config = ft.build_finetune_run_config(base, root=root, project=project, job=job, resources=resources)
+    # --vram-gb is a floor on the GPU class, not just a capacity: opbdh
+    # picks the cheapest card that fits the estimate, and a bigger floor is
+    # how you ask for a faster one.
+    floor = int(overrides.get("vram_gb") or 0)
+    if floor > config.vram_gb:
+        config.vram_gb = floor
     hx.step(f"{project.method.upper()} via {config.provider}: {job.example_count} examples, "
             f"{config.gpu_count} GPU(s), {resources.vram_per_gpu_gb} GB VRAM/GPU")
     hx.say(f"Native recipe saved in {root / '.opbdh'}; resume with `opbdh ft` from {root}")
