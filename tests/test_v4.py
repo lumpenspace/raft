@@ -136,6 +136,20 @@ def test_ask_question_splits_thinking_from_the_reply(project):
     assert system.startswith("You are persona. It is ") and "Before you reply, think" in system
 
 
+def test_thinking_recall_rides_in_the_single_system_message(project):
+    with patch("raft.memories.OpenAI") as client:
+        client.return_value.chat.completions.create.return_value.choices[0].message.content = "ok"
+        manager = MemoryManager(project, {})
+        with patch.object(MemoryManager, "get_similar_and_summarize", return_value="from 2023: I said so."):
+            manager.ask_question("Why?", model="m", thinking=True)
+            roles = [m["role"] for m in client.return_value.chat.completions.create.call_args.kwargs["messages"]]
+            first = client.return_value.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+            assert roles == ["system", "user"] and "from 2023: I said so." in first
+            manager.ask_question("Why?", model="m", thinking=False)
+            roles = [m["role"] for m in client.return_value.chat.completions.create.call_args.kwargs["messages"]]
+            assert roles == ["system", "system", "user"]
+
+
 def test_thinking_flag_sticks_to_the_dataset(project, monkeypatch):
     monkeypatch.chdir(project.root)
     monkeypatch.setattr("sys.argv", ["raft", "ft:gen", "--generic", "--thinking"])

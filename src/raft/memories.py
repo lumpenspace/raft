@@ -396,12 +396,19 @@ class MemoryManager:
         today = datetime.now().date().isoformat()
         target = self.metadata.get(MetaDataKeyEnum.PARTICIPANTS, {}).get("a") if isinstance(
             self.metadata.get(MetaDataKeyEnum.PARTICIPANTS), dict) else None
-        messages: List[ChatCompletionMessageParam] = [
-            self.prompt_manager.get_interview_system_message(
-                "someone", target or self.name, today, "a conversation", thinking
-            ),
-        ]
-        if memories:
+        system = self.prompt_manager.get_interview_system_message(
+            "someone", target or self.name, today, "a conversation", thinking
+        )
+        messages: List[ChatCompletionMessageParam] = [system]
+        if memories and thinking:
+            # A thinking model was trained with the recall inside its own
+            # <think> block and its template (Qwen3.5+) allows one system
+            # message, at the start: the recall rides in that one.
+            messages[0] = ChatCompletionSystemMessageParam(
+                role="system",
+                content=f"{system['content']}\n\nWhat you have written before that may bear on this:\n{memories}",
+            )
+        elif memories:
             messages.append(ChatCompletionSystemMessageParam(
                 role="system", content=f"Earlier writing of yours that may bear on this:\n{memories}"
             ))

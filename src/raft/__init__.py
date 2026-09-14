@@ -6,4 +6,4 @@ load_dotenv()
 
 __all__ = ["__version__"]
 
-__version__ = "2.8.8"
+__version__ = "2.8.9"
