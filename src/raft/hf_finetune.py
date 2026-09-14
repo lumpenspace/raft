@@ -1,8 +1,14 @@
-"""Hugging Face fine-tuning through OPBDH's native SFT facility."""
+"""
+Hugging Face fine-tuning through OPBDH's native SFT facility -- on a
+rented GPU pod, or on this machine's own accelerator (Apple Silicon /
+CUDA) through opbdh's local execution (`--target mps|cuda`).
+"""
 
 from dataclasses import asdict
 from pathlib import Path
 import os
+import subprocess
+import sys
 from typing import Any, Dict, List, Optional
 
 from . import hx
@@ -13,6 +19,12 @@ OPBDH_INSTALL_HINT = (
     "opbdh is not installed. Install it with:\n"
     "  pip install -U 'opbdh[ft]>=1.10.0'\n"
     "then run `opbdh config wizard` to set up your provider credentials."
+)
+
+LOCAL_TARGETS = ("mps", "cuda")
+LOCAL_STACK_HINT = (
+    "training on this machine needs the runner's stack in this environment:\n"
+    "  pip install 'raft-ft[local]'"
 )
 
 # Model-name prefixes OpenAI accepts for finetuning; anything else is
@@ -164,6 +176,78 @@ def prepare_run_dir(dataset: DatasetLike, model: str) -> str:
     return str(prepare_finetune(dataset, model, {})[2].directory)
 
 
+def default_local_target(opbdh: Any) -> str:
+    """The accelerator opbdh finds on this machine: cuda over mps."""
+    capacities = opbdh.local_accelerators()
+    for target in ("cuda", "mps"):
+        if target in capacities:
+            return target
+    bail("no local accelerator found (opbdh needs torch with CUDA or MPS here)")
+    return ""
+
+
+def require_local_stack() -> None:
+    """The runner imports these itself; fail before opbdh's capacity check does."""
+    try:
+        import datasets  # noqa: F401
+        import peft  # noqa: F401
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+        import trl  # noqa: F401
+    except ImportError as e:
+        bail(f"{LOCAL_STACK_HINT}\n  ({e})")
+
+
+def run_local_finetune(
+    dataset: DatasetLike, model: str, target: str, overrides: Dict[str, Any], dry_run: bool = False
+) -> str:
+    """
+    Train on this machine's accelerator: the same native opbdh recipe and
+    runner as a pod run, launched through opbdh.launch_local (which
+    checks free accelerator memory first and sets OPBDH_DEVICE).
+
+    Returns:
+        str: The local path of the trained LoRA adapter.
+    """
+    opbdh = load_opbdh()
+    from opbdh import finetune as ft
+
+    if target not in LOCAL_TARGETS:
+        bail(f"--target must be one of {', '.join(LOCAL_TARGETS)}, not {target!r}")
+    if target == "mps":
+        # QLoRA's 4-bit kernels are CUDA-only; the runner refuses it there.
+        overrides.setdefault("method", "lora")
+    root, project, job, _ = prepare_finetune(dataset, model, overrides)
+    resources = ft.estimate_finetune_resources(project)
+    # The estimate assumes bf16 on a GPU; on MPS the runner trains in fp32.
+    required_gb = resources.vram_per_gpu_gb * (2 if target == "mps" else 1)
+    results_dir = root.expanduser().resolve() / getattr(ft, "RESULTS_DIR", "results") / project.active_recipe
+    argv = [sys.executable, str(job.directory / "run.py")]
+    hx.step(
+        f"{project.method.upper()} on this machine ({target}): {job.example_count} examples, "
+        f"~{required_gb} GB of accelerator memory"
+    )
+    hx.say(f"Native recipe saved in {root / '.opbdh'}; results land in {results_dir}")
+    if dry_run:
+        hx.say("dry run: " + " ".join(argv))
+        return ""
+    require_local_stack()
+    try:
+        opbdh.launch_local(
+            argv, target=target, required_gb=required_gb, cwd=job.directory,
+            env={"OPBDH_RESULTS_DIR": str(results_dir)},
+        )
+    except ValueError as e:
+        bail(f"cannot train on this machine: {e}")
+    except subprocess.CalledProcessError as e:
+        bail(f"the local finetune failed (exit status {e.returncode})")
+    adapter = results_dir / "model"
+    if not (adapter / "adapter_config.json").is_file():
+        raise RuntimeError(f"the runner finished without an adapter at {adapter}")
+    hx.ok(f"done — the LoRA adapter is in {adapter}")
+    return str(adapter)
+
+
 def pick_model_interactively(opbdh: Any) -> str:
     """Pick a huggingface model, optionally searching the hub via opbdh."""
     while True:
@@ -193,7 +277,8 @@ def run_hf_finetune(
         dataset: Dataset name or project paths.
         model (str): Huggingface model id (asked interactively if empty).
         opbdh_args (Optional[List[str]]): Native SFT recipe settings and GPU configuration
-            overrides (on top of any opbdh.json config).
+            overrides (on top of any opbdh.json config); `--target mps|cuda`
+            trains on this machine instead of a pod.
         interactive (bool): Ask for missing settings instead of relying
             on opbdh defaults/config.
 
@@ -211,18 +296,31 @@ def run_hf_finetune(
     dry_run = overrides.pop("dry_run", False)
     if not isinstance(dry_run, bool):
         raise ValueError("--dry-run must be a boolean")
+    target = overrides.pop("target", None)
+    if target is True:
+        bail(f"--target needs a value: {' or '.join(LOCAL_TARGETS)}")
     if interactive:
-        if "provider" not in overrides:
-            choice = choose("GPU provider", ["use configured provider", "RunPod", "Prime Intellect (multi-cloud marketplace)"])
-            if choice:
+        if target is None and "provider" not in overrides:
+            choice = choose(
+                "Where should it train?",
+                [
+                    "use configured provider", "RunPod", "Prime Intellect (multi-cloud marketplace)",
+                    "this machine (Apple Silicon / CUDA, via opbdh local execution)",
+                ],
+            )
+            if choice == 3:
+                target = default_local_target(opbdh)
+            elif choice:
                 overrides["provider"] = ("runpod", "primeintellect")[choice - 1]
-        if "method" not in overrides:
+        if "method" not in overrides and target != "mps":
             method = choose("Fine-tuning method", ["LoRA", "QLoRA (4-bit)"])
             overrides["method"] = ("lora", "qlora")[method]
-        if "max_spend" not in overrides and "max_spend_dollars" not in overrides:
+        if not target and "max_spend" not in overrides and "max_spend_dollars" not in overrides:
             spend = ask("Max total spend in $ (empty = saved setting)", "")
             if spend:
                 overrides["max_spend"] = float(spend)
+    if target:
+        return run_local_finetune(dataset, model, str(target), overrides, dry_run)
     root, project, job, base = prepare_finetune(dataset, model, overrides)
     resources = ft.estimate_finetune_resources(project)
     config = ft.build_finetune_run_config(base, root=root, project=project, job=job, resources=resources)

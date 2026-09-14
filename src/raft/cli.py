@@ -36,9 +36,10 @@ The following actions are available:
 - serve: Chat with the finetuned persona, retrieval-augmented.
 
 ft:run routes by --model: OpenAI-finetunable ids go to the OpenAI API,
-anything else (an org/name huggingface id) is trained on a GPU pod via
-opbdh; extra flags after the name configure
-opbdh SFT and GPU settings (e.g. --method qlora --provider primeintellect).
+anything else (an org/name huggingface id) is trained via opbdh -- on a
+GPU pod, or on this machine's accelerator with --target mps|cuda; extra
+flags after the name configure the opbdh SFT recipe and GPU settings
+(e.g. --method qlora --provider primeintellect, --epochs 1).
 """
 
 

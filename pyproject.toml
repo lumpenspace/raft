@@ -55,6 +55,18 @@ raft = "raft.cli:main"
 hf = ["opbdh[ft]>=1.10.0,<2"]
 # PDF sources in the gather phase of `raft interactive`.
 pdf = ["pypdf>=4.0"]
+# `raft ft:run --target mps|cuda`: the native opbdh runner trains in this
+# environment, so it needs the stack a pod would install (opbdh 1.10's
+# runner requirements, plus torch).
+local = [
+  "opbdh[ft]>=1.10.0,<2",
+  "torch>=2.4",
+  "accelerate>=1.14,<2",
+  "datasets>=4.8,<5",
+  "peft>=0.20,<0.21",
+  "transformers>=5,<6",
+  "trl>=0.29.1,<0.30",
+]
 # Tweet mode also needs ariadne, published on PyPI as ariadne-x (the bare
 # name is taken by the GraphQL library): pip install ariadne-x
 dev = ["build>=1.2", "pytest>=8.0", "ruff>=0.8", "twine>=5.0"]

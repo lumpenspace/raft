@@ -71,3 +71,34 @@ def test_dry_run_and_synced_adapter_path(dataset, tmp_path):
 def test_reject_full_model_training_in_adapter_workflow(dataset):
     with pytest.raises(ValueError, match="supports --method"):
         prepare_finetune("d", "test/model", {"method": "full"})
+
+
+def test_local_target_trains_through_opbdh_launch_local(dataset, tmp_path):
+    import os
+    import sys
+
+    resources = SimpleNamespace(vram_per_gpu_gb=24, disk_gb=80, host_ram_per_gpu_gb=16)
+
+    def launch_local(argv, *, target, required_gb, cwd, env):
+        results = tmp_path / env["OPBDH_RESULTS_DIR"] if not os.path.isabs(env["OPBDH_RESULTS_DIR"]) else __import__("pathlib").Path(env["OPBDH_RESULTS_DIR"])
+        (results / "model").mkdir(parents=True)
+        (results / "model" / "adapter_config.json").write_text("{}")
+        launch_local.calls.append((argv, target, required_gb, cwd))
+
+    launch_local.calls = []
+    with patch.object(ft, "estimate_finetune_resources", return_value=resources), \
+         patch("opbdh.launch_local", side_effect=launch_local), patch("opbdh.launch") as launch, \
+         patch("raft.hf_finetune.require_local_stack"):
+        assert run_hf_finetune("d", "test/model", ["--target", "mps", "--dry-run"]) == ""
+        assert launch_local.calls == []
+        adapter = run_hf_finetune("d", "test/model", ["--target", "mps", "--epochs", "1"])
+    launch.assert_not_called()
+    (argv, target, required_gb, cwd), = launch_local.calls
+    assert target == "mps" and required_gb == 48  # fp32 on MPS: twice the bf16 estimate
+    assert argv == [sys.executable, str(cwd / "run.py")] and (cwd / "dataset.jsonl").exists()
+    assert adapter.endswith("/model") and json.loads(open(cwd / "config.json").read())["method"] == "lora"
+
+
+def test_local_target_rejects_unknown_accelerator(dataset):
+    with pytest.raises(SystemExit):
+        run_hf_finetune("d", "test/model", ["--target", "tpu"])

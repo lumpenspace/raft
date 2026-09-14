@@ -56,7 +56,7 @@ def test_explicit_ariadne_roles_are_respected(project):
 
 
 def test_source_plan_accepts_multiple_sources_and_roles():
-    with patch("raft.flows.choose", side_effect=[0, 0, 1, 1, 1, 0, 7]):
+    with patch("raft.flows.choose", side_effect=[0, 0, 1, 1, 1, 0, 8]):
         assert flows.plan_sources() == [
             {"kind": 0, "role": "conversation"}, {"kind": 1, "role": "corpus"},
             {"kind": 1, "role": "conversation"}]
