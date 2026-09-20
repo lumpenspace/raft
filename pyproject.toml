@@ -36,6 +36,7 @@ dependencies = [
   # ships one.
   "chromadb>=1.5.9,<2",
   "openai>=1.14",
+  "packaging>=24.0",
   "pandas>=2.2",
   "python-dotenv>=1.0",
   "requests>=2.31",
