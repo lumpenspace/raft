@@ -24,7 +24,7 @@ def action_doc() -> str:
     return """
 The following actions are available:
 
-- version: Print the installed raft-ft version.
+- version: Print the installed raft-ft version and compare it with PyPI.
 - init: Initialize a persona project in the current or specified directory.
 - interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - fetch <source>: Import one source into the project. Sources:
@@ -269,7 +269,11 @@ def main() -> None:
     if args.action == "version":
         if args.rest:
             parser.error(f"unrecognized arguments: {' '.join(args.rest)}")
-        print(f"raft-ft {__version__}")
+        from .versioning import report_versions
+
+        status = report_versions()
+        if status:
+            raise SystemExit(status)
         return
 
     positionals = list(args.rest)
