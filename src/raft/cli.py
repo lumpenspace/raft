@@ -4,6 +4,7 @@ This module contains the main CLI functionality for the RAFT project.
 
 import argparse
 import sys
+from raft import __version__
 from raft import (
     files_helper,
     embeddings_helpers,
@@ -23,6 +24,7 @@ def action_doc() -> str:
     return """
 The following actions are available:
 
+- version: Print the installed raft-ft version.
 - init: Initialize a persona project in the current or specified directory.
 - interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - fetch <source>: Import one source into the project. Sources:
@@ -57,6 +59,7 @@ flags after the name configure the opbdh SFT recipe and GPU settings
 
 
 cmds = [
+    "version",
     "init",
     "interactive",
     "fetch",
@@ -84,6 +87,12 @@ def main() -> None:
         description="Run the raft command.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=action_doc(),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"raft-ft {__version__}",
+        help="Print the installed raft-ft version and exit.",
     )
     parser.add_argument(
         "action",
@@ -256,6 +265,12 @@ def main() -> None:
 
     if args.action not in ("ft:run",) and extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
+
+    if args.action == "version":
+        if args.rest:
+            parser.error(f"unrecognized arguments: {' '.join(args.rest)}")
+        print(f"raft-ft {__version__}")
+        return
 
     positionals = list(args.rest)
     source = ""

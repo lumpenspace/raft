@@ -355,6 +355,8 @@ uv run ruff check .
 ### Usage
 
 ```bash
+raft --version  # or: raft version
+
 raft -h
 ```
 
