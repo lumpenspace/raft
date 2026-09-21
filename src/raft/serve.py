@@ -14,6 +14,8 @@ short serving recipe instead.
 import os
 from pathlib import Path
 
+from openai import OpenAIError
+
 from . import hx, state
 from .interactive import ask, bail
 from .memories import MemoryManager, preview_context
@@ -112,6 +114,17 @@ def run_serve(
         question = ask(f"To {target}", "").strip()
         if not question:
             return
-        show_context(paths, question)
-        answer = manager.ask_question(question, model=model, thinking=thinking)
+        try:
+            show_context(paths, question)
+            answer = manager.ask_question(question, model=model, thinking=thinking)
+        except (OpenAIError, RuntimeError) as e:
+            # A misrouted/unreachable endpoint (chat model, embeddings, or
+            # helper LLM -- OPENAI_BASE_URL / RAFT_EMBEDDING_BASE_URL /
+            # RAFT_LLM_BASE_URL) must not end an interactive session over
+            # one bad turn; batch flows (ft:gen) still fail loudly. Embedding
+            # failures surface as RuntimeError (embeddings_helpers wraps them
+            # for a clearer message); everything else here is an OpenAIError.
+            hx.warn(f"that turn failed, try again: {e}")
+            hx.warn("check OPENAI_BASE_URL / RAFT_EMBEDDING_BASE_URL / RAFT_LLM_BASE_URL and the model names")
+            continue
         print(f"\n{answer}\n")

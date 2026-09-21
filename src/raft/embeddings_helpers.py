@@ -6,10 +6,11 @@ import json
 import os
 from typing import Dict, Any, List
 from chromadb import PersistentClient
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 from .sources import date_num
 from .project import DatasetLike, dataset_paths
+from .prompt_manager import describe_llm_failure
 
 # Any model behind an OpenAI-compatible endpoint works (OPENAI_BASE_URL
 # pointed at ollama, say, with RAFT_EMBEDDING_MODEL=nomic-embed-text);
@@ -45,9 +46,13 @@ def get_embedding(text: str) -> List[float]:
     Returns:
         List[float]: The embedding vector.
     """
-    embedding_object = _get_client().embeddings.create(
-        input=text, model=EMBEDDING_MODEL
-    )
+    client = _get_client()
+    try:
+        embedding_object = client.embeddings.create(input=text, model=EMBEDDING_MODEL)
+    except OpenAIError as e:
+        # A bare "Not Found" (mlx_lm.server et al. don't serve /embeddings
+        # at all) is otherwise indistinguishable from a dozen other causes.
+        raise RuntimeError(describe_llm_failure(client, EMBEDDING_MODEL, e)) from e
     embedding_vector = embedding_object.data[0].embedding
     return embedding_vector
 
