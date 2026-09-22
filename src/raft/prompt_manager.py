@@ -2,7 +2,7 @@ import os
 import re
 from typing import Dict, List, Tuple
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
@@ -33,6 +33,23 @@ def helper_client() -> OpenAI:
         base_url=os.environ.get("RAFT_LLM_BASE_URL") or None,
         api_key=os.environ.get("RAFT_LLM_API_KEY") or None,
     )
+
+
+def describe_llm_failure(client: OpenAI, model: str, exc: Exception) -> str:
+    """
+    A one-line explanation for a failed helper-LLM call, to put in a
+    `hx.warn` next to whatever swallowed it. An OpenAIError means the
+    request reached `client.base_url` but got back a bad response (wrong
+    model name, auth, connection refused...); name the model and endpoint
+    actually used, since the raw error -- a 404 from whatever that
+    endpoint happened to say, an auth failure, ECONNREFUSED -- rarely
+    says that on its own, and is easy to misread as raft or the model
+    itself being broken. Anything else (a bug in our own code) is passed
+    through as-is.
+    """
+    if isinstance(exc, OpenAIError):
+        return f"model={model!r} at {client.base_url}: {exc}"
+    return str(exc)
 
 
 _MARKERS = r"^[\s\-*#>\d.)(]*"  # list bullets, numbering, markdown emphasis before a label

@@ -230,11 +230,47 @@ def test_prompts_trim_the_previous_reply_and_pick_the_reasoning_model(monkeypatc
 
 
 def test_a_failed_summary_is_skipped_not_fatal():
+    # The error rides along on the result instead of being warned about
+    # here -- summarize_helpful_memories (these run concurrently, one per
+    # retrieved document) is what dedupes and warns, so one bad config
+    # doesn't print the same failure once per document.
     manager = MemoryManager.__new__(MemoryManager)
     manager.name = "sam"
     manager.prompt_manager = PromptManager()
-    with patch.object(PromptManager, "summarize_memory", side_effect=RuntimeError("500")), patch("raft.memories.hx.warn"):
-        assert manager.summarize_memory({"date": "2024-01-01", "document": "d"}, "q", "") == {"date": "2024-01-01", "memory": ""}
+    with patch.object(PromptManager, "summarize_memory", side_effect=RuntimeError("500")):
+        result = manager.summarize_memory({"date": "2024-01-01", "document": "d"}, "q", "")
+        assert result["date"] == "2024-01-01"
+        assert result["memory"] == ""
+        assert "500" in result["_error"]
+
+
+def test_identical_summary_failures_are_reported_once():
+    manager = MemoryManager.__new__(MemoryManager)
+    manager.name = "sam"
+    manager.prompt_manager = PromptManager()
+    similar = [
+        {"date": "2024-01-01", "document": "a", "title": ""},
+        {"date": "2024-01-02", "document": "b", "title": ""},
+        {"date": "2024-01-03", "document": "c", "title": ""},
+    ]
+    request_id = {"a": "id-1", "b": "id-2", "c": "id-3"}
+
+    def flaky(document, *args, **kwargs):
+        # Same underlying failure, but each call carries its own request
+        # id (like a real 404 from OpenAI or huggingface_hub) -- this
+        # exercises the id-splitting, not just plain string equality.
+        raise RuntimeError(f"404 Client Error. (Request ID: {request_id[document]})\n\nRepository Not Found.")
+
+    with patch.object(PromptManager, "summarize_memory", side_effect=flaky), \
+            patch("raft.memories.hx.warn") as warn:
+        summaries = manager.summarize_helpful_memories("q", similar, "")
+    assert len(summaries) == 3
+    assert all("_error" not in s for s in summaries)  # not leaked to the caller
+    assert warn.call_count == 1  # three identical failures, one warning
+    message = warn.call_args.args[0]
+    assert "(3x)" in message
+    assert "Request ID" not in message.split("[request ids:")[0]  # stripped from the main message
+    assert "[request ids: id-1, id-2, id-3]" in message  # every id kept, in order
 
 
 def test_each_role_can_have_its_own_endpoint(monkeypatch):

@@ -1,4 +1,5 @@
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Tuple, Union, Any
+from collections import Counter
 from enum import Enum
 import os
 import threading
@@ -17,13 +18,28 @@ from openai.types.chat import (
 )
 
 from . import hx
-from .prompt_manager import NO_VERDICT, PromptManager
+from .prompt_manager import NO_VERDICT, REASONING_MODEL, SUMMARY_MODEL, PromptManager, describe_llm_failure
 from .embeddings_helpers import get_embedding, store_exchange_embedding
 from .sources import date_num
 from .project import DatasetLike, dataset_paths
 
 MAX_EMBEDDING_LENGTH = 2048
 encoding = tiktoken.encoding_for_model("gpt-4-turbo")
+
+# OpenAI's and huggingface_hub's request-id marker -- the only part of an
+# otherwise-identical failure that varies call to call.
+_REQUEST_ID = re.compile(r"\(request id:\s*([^)]*)\)\s*", re.IGNORECASE)
+
+
+def _split_failure(message: str) -> Tuple[str, Optional[str]]:
+    """
+    A failed-call message split into (the rest, its request id or None).
+    Five calls failing for the same reason then compare equal on the
+    first half -- one warning, not five -- while every individual id is
+    still there to correlate against a server's own logs if needed.
+    """
+    match = _REQUEST_ID.search(message)
+    return _REQUEST_ID.sub("", message).strip(), (match.group(1) if match else None)
 
 # Seconds to pause between LLM-heavy steps. The 2023 code slept a fixed
 # 3 s per exchange for OpenAI's rate limits of the day; against a local
@@ -264,8 +280,11 @@ class MemoryManager:
                 title=str(memory.get("title") or ""),
             )
         except Exception as e:  # one lost recollection must not end a long run
-            hx.warn(f"memory summary failed, skipping it: {e}")
-            return {"date": memory["date"], "memory": ""}
+            # Collected and warned about once (not per-document) by the
+            # caller, which runs these concurrently and would otherwise
+            # print the same failure five times in a burst.
+            error = describe_llm_failure(prompt_manager.client, SUMMARY_MODEL, e)
+            return {"date": memory["date"], "memory": "", "_error": error}
         return {"date": memory["date"], "memory": grounded_recall(summary, str(memory["document"]))}
 
     def summarize_helpful_memories(
@@ -293,6 +312,26 @@ class MemoryManager:
                     similar,
                 )
             )
+        # These ran concurrently, so identical failures (the usual case --
+        # one bad config breaks every one of them the same way) would
+        # otherwise print as an unreadable burst of duplicate warnings.
+        # Collapse each distinct message into one line with a count -- but
+        # a request id is only present on some failures (not e.g. a bare
+        # 404 with no body), so the count and the id list are tracked
+        # separately rather than inferring one from the other.
+        groups: Dict[str, Dict[str, Any]] = {}
+        for s in summaries:
+            if "_error" not in s:
+                continue
+            message, request_id = _split_failure(s.pop("_error"))
+            group = groups.setdefault(message, {"count": 0, "ids": []})
+            group["count"] += 1
+            if request_id:
+                group["ids"].append(request_id)
+        for message, group in groups.items():
+            times = f" ({group['count']}x)" if group["count"] > 1 else ""
+            ids_note = f" [request ids: {', '.join(group['ids'])}]" if group["ids"] else ""
+            hx.warn(f"memory summary failed, skipping it{times}: {message}{ids_note}")
         return summaries
 
     # One write plus this many rewrites before a trace is given up on.
@@ -341,7 +380,7 @@ class MemoryManager:
                         objection=objection, rejected=rejected if objection else "",
                     )
                 except Exception as e:  # noqa: BLE001 -- one lost call must not end a long run
-                    hx.warn(f"reasoning trace call failed: {e}")
+                    hx.warn(f"reasoning trace call failed: {describe_llm_failure(self.prompt_manager.client, REASONING_MODEL, e)}")
                     trace = ""
                 if not trace.strip():
                     objection, rejected = "the writer returned nothing", ""
@@ -359,7 +398,7 @@ class MemoryManager:
                         question, memories, trace, answer, author=self.name, prev_answer=prev_answer
                     )
                 except Exception as e:  # noqa: BLE001
-                    hx.warn(f"trace judge call failed: {e}")
+                    hx.warn(f"trace judge call failed: {describe_llm_failure(self.prompt_manager.client, REASONING_MODEL, e)}")
                     passed, why = False, "the judge could not be reached"
             if passed:
                 if why == NO_VERDICT:
