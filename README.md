@@ -256,6 +256,12 @@ New major version. Substack is no longer the only way in:
   `--gpu-count`, `--vram-gb`, and `--max-dollars-per-hour`; a project-root
   `opbdh.json` works too. `--dry-run` previews the launch without renting compute
   or recording a trained model. RAFT supports LoRA and QLoRA adapters.
+  For custom architectures, `--lora-target-modules attn_query,attn_key,attn_value`
+  selects module names explicitly; an empty value uses PEFT's `all-linear`
+  default. This requires OPBDH's [custom-target support](https://github.com/lumpenspace/opbdh/pull/5).
+  Until that change is released on PyPI, install OPBDH from its updated source:
+  `pip install -U 'opbdh[ft] @ git+https://github.com/lumpenspace/opbdh.git'`.
+  Omitted options retain the active recipe's saved selection.
   The command prints the native recipe directory, where `opbdh ft` can resume the
   workflow, and returns the synced `model/` adapter directory after training.
 

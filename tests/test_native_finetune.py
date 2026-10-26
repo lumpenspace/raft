@@ -8,6 +8,49 @@ from opbdh import finetune as ft
 from raft.hf_finetune import prepare_finetune, run_hf_finetune
 
 
+@pytest.mark.parametrize("flags", [
+    ["--lora-target-modules", "attn_query,attn_key"],
+    ["--lora-target-modules=attn_query,attn_key"],
+])
+@pytest.mark.parametrize("local", [True, False])
+def test_custom_lora_targets_reach_saved_recipe_and_job(dataset, flags, local):
+    from raft.hf_finetune import parse_opbdh_flags
+    import opbdh
+
+    if "lora_target_modules" not in ft.FineTuneProject.__dataclass_fields__:
+        pytest.skip("requires OPBDH custom-target support; exercised by source integration CI")
+    options = parse_opbdh_flags([*flags, "--gpu-count", "2", "--max-spend", "3", "--recipe", "custom"])
+    with patch("opbdh.configure", wraps=opbdh.configure) as configure, \
+         patch("raft.hf_finetune.model_type_of", return_value=""):
+        root, project, job, base = prepare_finetune("d", "test/model", options, local=local)
+    assert "lora_target_modules" not in configure.call_args.kwargs
+    assert configure.call_args.kwargs["gpu_count"] == 2
+    assert base.max_spend_dollars == 3
+    assert project.lora_target_modules == "attn_query,attn_key"
+    assert ft.load_finetune_project(root).lora_target_modules == "attn_query,attn_key"
+    assert json.loads((job.directory / "config.json").read_text())["lora_target_modules"] == "attn_query,attn_key"
+    with patch("raft.hf_finetune.model_type_of", return_value=""):
+        _, resumed, job, _ = prepare_finetune("d", "test/model", {}, local=local)
+        assert resumed.lora_target_modules == "attn_query,attn_key"
+        assert json.loads((job.directory / "config.json").read_text())["lora_target_modules"] == "attn_query,attn_key"
+        _, cleared, job, _ = prepare_finetune(
+            "d", "test/model", parse_opbdh_flags(["--lora-target-modules="]), local=local,
+        )
+    assert cleared.lora_target_modules == ""
+    assert json.loads((job.directory / "config.json").read_text())["lora_target_modules"] == ""
+
+
+def test_custom_targets_fail_explicitly_with_older_opbdh(dataset, monkeypatch):
+    fields = dict(ft.FineTuneProject.__dataclass_fields__)
+    fields.pop("lora_target_modules", None)
+    monkeypatch.setattr(ft.FineTuneProject, "__dataclass_fields__", fields)
+    with patch("opbdh.configure") as configure, patch("opbdh.launch") as launch:
+        with pytest.raises(RuntimeError, match="Upgrade OPBDH"):
+            prepare_finetune("d", "test/model", {"lora_target_modules": "attn_query"})
+    configure.assert_not_called()
+    launch.assert_not_called()
+
+
 @pytest.fixture
 def dataset(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
