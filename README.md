@@ -260,7 +260,8 @@ New major version. Substack is no longer the only way in:
   selects module names explicitly; an empty value uses PEFT's `all-linear`
   default. This requires OPBDH's [custom-target support](https://github.com/lumpenspace/opbdh/pull/5).
   Until that change is released on PyPI, install OPBDH from its updated source:
-  `pip install -U 'opbdh[ft] @ git+https://github.com/lumpenspace/opbdh.git'`.
+  `pip install -U --force-reinstall 'opbdh[ft] @ git+https://github.com/lumpenspace/opbdh.git'`
+  (the source currently shares a version number with the older published package).
   Omitted options retain the active recipe's saved selection.
   The command prints the native recipe directory, where `opbdh ft` can resume the
   workflow, and returns the synced `model/` adapter directory after training.
