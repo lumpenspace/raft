@@ -232,7 +232,7 @@ def install_thinking_template(job_dir: Path, model: str, local: bool) -> Optiona
 TRAINING_FIELDS = {
     "epochs", "learning_rate", "max_length", "per_device_batch_size",
     "gradient_accumulation_steps", "lora_r", "lora_alpha", "lora_dropout",
-    "packing", "seed", "trust_remote_code", "chat_template",
+    "packing", "seed", "trust_remote_code", "chat_template", "lora_target_modules",
 }
 FLAG_ALIASES = {"batch_size": "per_device_batch_size", "gradient_accumulation": "gradient_accumulation_steps"}
 
@@ -253,6 +253,11 @@ def prepare_finetune(dataset: DatasetLike, model: str, options: Dict[str, Any], 
         bail(f"{source} not found -- run `{paths.command('ft:gen')}` first")
     options = {FLAG_ALIASES.get(k, k): v for k, v in options.items()}
     training = {key: options.pop(key) for key in list(options) if key in TRAINING_FIELDS}
+    if "lora_target_modules" in training and "lora_target_modules" not in ft.FineTuneProject.__dataclass_fields__:
+        raise RuntimeError(
+            "--lora-target-modules needs an OPBDH version with custom LoRA target support. "
+            "Upgrade OPBDH (https://github.com/lumpenspace/opbdh/pull/5) and retry."
+        )
     method = options.pop("method", None)
     recipe = options.pop("recipe", None)
     extra_requirements = str(options.pop("extra_requirements", "") or "").split(",")
