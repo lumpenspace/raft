@@ -362,6 +362,9 @@ uv run ruff check .
 ### Usage
 
 ```bash
+raft --version  # print the installed version without using the network
+raft version    # compare the installed version with the latest release on PyPI
+
 raft -h
 ```
 
@@ -369,6 +372,7 @@ raft -h
 
 The following actions are available:
 
+- version: Print the installed raft-ft version and compare it with PyPI.
 - init: Initialize a persona project in the current or specified directory.
 - interactive: Guided session in five phases: gather, prep, train, eval, serve.
 - fetch <source>: Import one source into the project. Sources:
